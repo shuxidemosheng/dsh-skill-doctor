@@ -29,7 +29,8 @@ export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnTy
     name: 'plugin_doctor',
     description: 'Check the installed DeepSeek Harness plugins in a profile for structural conflicts: the same loader entry inserted or patched by two plugins, a bundle listed twice, a dependency that is installed but not enabled, or an enabled bundle whose package is missing. '
       + 'Use it when a plugin\'s tool does not show up, when two plugins seem to fight over the same setting, or after installing several plugins. '
-      + 'It only reads profile files; it never changes or loads a plugin. It cannot see runtime tool-name collisions, because the tool registry does not expose which plugin registered a name.',
+      + 'It only reads profile files; it never changes or loads a plugin. It cannot see runtime tool-name collisions, because the tool registry does not expose which plugin registered a name. '
+      + 'The report is Markdown: show it to the user as Markdown, never inside a code block.',
     parameters: {
       profile: { type: 'string', description: 'Profile to inspect (defaults to the profile this session runs in).' },
       format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format; defaults to markdown.' },

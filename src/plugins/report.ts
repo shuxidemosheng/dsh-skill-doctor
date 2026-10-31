@@ -27,6 +27,24 @@ function formatSource(source: string | undefined): string {
   return `registry ${source}`
 }
 
+/** 报告摘要表：先给能一眼扫完的四行，再展开细节。 */
+function summaryTable(report: PluginReport, conflicts: readonly PluginConflict[]): string[] {
+  const shipped = report.bundles.filter(bundle => bundle.availability === 'shipped').length
+  const missing = report.bundles.filter(bundle => bundle.availability === 'missing').length
+  const local = report.bundles.length - shipped - missing
+  const error = conflicts.filter(item => item.severity === 'error').length
+  const warn = conflicts.filter(item => item.severity === 'warn').length
+  return [
+    '| 项目 | 情况 |',
+    '|---|---|',
+    `| Profile | \`${report.profileName}\` |`,
+    `| 插件 | ${report.bundles.length} 个（本地 ${local} / dsh 自带 ${shipped} / 缺失 ${missing}） |`,
+    `| 冲突 | ${error > 0 ? `**${error} 个严重**` : '0 个严重'}，${warn} 个警告 |`,
+    `| 结论 | ${verdict(report, conflicts)} |`,
+    '',
+  ]
+}
+
 /** 一行插件清单。 */
 function bundleRow(bundle: PluginReport['bundles'][number]): string {
   const version = bundle.version ?? '?'
@@ -58,6 +76,7 @@ export function renderPluginMarkdown(report: PluginReport): string {
     '',
     `**结论：${verdict(report, conflicts)}**`,
     '',
+    ...summaryTable(report, conflicts),
     `## 装了哪些插件（${report.bundles.length} 个）`,
     '',
     '| 插件 | 版本 | 来源 | 状态 |',
