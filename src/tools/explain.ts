@@ -21,7 +21,8 @@ export function buildExplainTool(ctx: Context, config: ResolvedConfig): ReturnTy
   return defineTool({
     name: 'skill_explain',
     description: 'Explain one skill: which provider/source/path won, whether it is model- and user-invocable, its description length and body token estimate, whether ctx.skills.get can actually load it, and the likely reason it is missing or ignored. '
-      + 'Use it when a skill does not appear in the available-skills catalog, does not respond to /name, or seems shadowed by another provider.',
+      + 'Use it when a skill does not appear in the available-skills catalog, does not respond to /name, or seems shadowed by another provider. '
+      + 'The tool result is already a complete Markdown report: reply with it verbatim (at most one short lead-in sentence); do not summarize or rebuild it.',
     parameters: {
       name: { type: 'string', required: true, description: 'Exact skill name to explain.' },
       extraRoots: {

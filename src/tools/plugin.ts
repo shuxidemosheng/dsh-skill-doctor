@@ -32,7 +32,7 @@ export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnTy
       + 'Use it when a plugin\'s tool does not show up, when two plugins seem to fight over the same setting, or after installing several plugins. '
       + 'Also use it for cross-layer symptoms: when skills suddenly disappear or shrink, a plugin patch may have changed the skill catalogue config — the consultation section lists every bundle touchpoint on the skill chain. '
       + 'It only reads profile files and runtime state; it never changes, enables or loads a plugin. Two things it cannot tell you: which plugin registered a given tool name (the registry has no owner field), and why a plugin failed (the inventory projects the fiber phase but not the error). '
-      + 'The report is Markdown: show it to the user as Markdown, never inside a code block.',
+      + 'The tool result is already a complete Markdown report: reply with it verbatim (at most one short lead-in sentence); do not summarize or rebuild it as your own tables. Never paste it inside a code block.',
     parameters: {
       profile: { type: 'string', description: 'Profile to inspect (defaults to the profile this session runs in).' },
       format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format; defaults to markdown.' },

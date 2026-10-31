@@ -42,7 +42,9 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
       + 'If a baseline record (saved once by the CLI via --save) is configured under config key `baseline`, the report opens with a follow-up comparison against it: what improved, what is untouched, what regressed. '
       + 'Use this first when a skill does not appear, does not respond, or seems ignored. It only reads files and never changes or executes a skill. '
-      + 'The report is Markdown: show it to the user as Markdown (headings, table, emphasis) — never paste it inside a code block or quote it as raw text.',
+      + 'The tool result is already a complete, user-ready Markdown report: reply with it verbatim (at most one short lead-in sentence of your own). '
+      + 'Do NOT summarize it, do NOT rebuild it as your own tables, and do NOT drop sections — the prescription lines, the follow-up comparison, the calibration note and the technical appendix are part of the diagnosis, not decoration. '
+      + 'Never paste it inside a code block or quote it as raw text.',
     parameters: {
       name: { type: 'string', description: 'Diagnose one skill by exact name; omit for a grouped report of every visible skill.' },
       extraRoots: {
