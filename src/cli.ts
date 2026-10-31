@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 /** dsh-skill-lint：不依赖 dsh 运行时的技能 lint CLI，供技能作者与 CI 使用。 */
+import { basename } from 'node:path'
+import {
+  buildBaseline,
+  currentMetaOf,
+  diffBaseline,
+  expandHome,
+  loadBaseline,
+  saveBaseline,
+} from './baseline.js'
 import { resolveConfig, withRuleFilter, type ResolvedConfig } from './config.js'
 import { RULE_IDS, RULES } from './scanner/rules.js'
 import { scanRoots, scanSkillFile } from './scanner/fs-scan.js'
@@ -30,6 +39,8 @@ interface CliOptions {
   readonly fix: boolean
   readonly apply: boolean
   readonly only?: FixableRule[]
+  readonly save?: string
+  readonly compare?: string
 }
 
 function fail(message: string): never {
@@ -58,6 +69,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let profile: string | undefined
   let fix = false
   let apply = false
+  let save: string | undefined
+  let compare: string | undefined
   const only: FixableRule[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -69,6 +82,18 @@ function parseArgs(argv: readonly string[]): CliOptions {
       case '--profile': profile = argv[++i]; break
       case '--fix': fix = true; break
       case '--apply': apply = true; break
+      case '--save': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--save requires a file path')
+        save = value.trim()
+        break
+      }
+      case '--compare': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--compare requires a file path')
+        compare = value.trim()
+        break
+      }
       case '--only': {
         const value = argv[++i]
         if (value === undefined) fail(`--only must be one of: ${FIXABLE_RULES.join(', ')}`)
@@ -112,6 +137,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
 
   // --apply 单独出现是没意义的，也最可能是手滑；直接拒绝比“静默什么都做”好。
   if (apply && !fix) fail('--apply only makes sense together with --fix')
+  // --save 存的是“这次体检”的快照；--fix 会当场改文件，存下来的就是旧状态了。
+  if (save !== undefined && fix) fail('--save cannot be used together with --fix')
 
   return {
     paths: paths.length === 0 ? ['.'] : paths,
@@ -126,6 +153,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
     fix,
     apply,
     ...only.length === 0 ? {} : { only },
+    ...save === undefined ? {} : { save },
+    ...compare === undefined ? {} : { compare },
     help,
     version,
   }
@@ -152,6 +181,10 @@ function usage(): string {
     `  --fix                  plan fixes for ${FIXABLE_RULES.join(' / ')}; writes nothing`,
     '  --apply                write the planned fixes (backs up to <file>.bak first)',
     `  --only <rule,...>      restrict --fix to these rules: ${FIXABLE_RULES.join(', ')}`,
+    '',
+    'Follow-up options (medical record / re-examination):',
+    '  --save <file>          save this scan as a baseline (medical record) for later comparison',
+    '  --compare <file>       compare this scan against a baseline; adds a follow-up section',
     '',
     '  --help, -h             show this help',
     '  --version, -v          show version',
@@ -288,9 +321,33 @@ async function main(): Promise<void> {
     return
   }
 
+  // 复诊：先算差值再存新病历，这样「对比旧病历 + 保存新病历」可以一条命令完成。
+  let baselineDiff: ReturnType<typeof diffBaseline> | undefined
+  let baselineLabel: string | undefined
+  let baselineMissing: string | undefined
+  if (options.compare !== undefined) {
+    const path = expandHome(options.compare)
+    const baseline = await loadBaseline(path)
+    if (baseline === undefined) {
+      baselineMissing = path
+      process.stderr.write(`dsh-skill-lint: cannot read baseline "${path}" (missing or invalid); skipping comparison\n`)
+    } else {
+      baselineDiff = diffBaseline(baseline, result, currentMetaOf(effective))
+      baselineLabel = `\`${basename(path)}\`（${baseline.savedAt.slice(0, 10)} 存档）`
+    }
+  }
+  if (options.save !== undefined) {
+    const path = expandHome(options.save)
+    await saveBaseline(path, buildBaseline(result, currentMetaOf(effective)))
+    process.stderr.write(`dsh-skill-lint: baseline saved to ${path}\n`)
+  }
+
   const reportOptions = {
     maxDescriptionLength: config.maxDescriptionLength,
     dshVersion: await readDshVersion(),
+    ...baselineDiff === undefined ? {} : { baselineDiff },
+    ...baselineLabel === undefined ? {} : { baselineLabel },
+    ...baselineMissing === undefined ? {} : { baselineMissing },
   }
   process.stdout.write(`${options.json
     ? renderLintJson(result, reportOptions)

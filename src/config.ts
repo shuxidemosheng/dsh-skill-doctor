@@ -20,6 +20,8 @@ export interface Config {
   includeProviders?: string[]
   /** 跳过这些 provider。 */
   excludeProviders?: string[]
+  /** 病历文件路径（支持 ~）；配置后 skill_doctor 会在报告里加「复诊对比」。 */
+  baseline?: string
 }
 
 /** 解析后的配置，所有字段必填。 */
@@ -32,6 +34,7 @@ export interface ResolvedConfig {
   readonly severityThreshold: Severity
   readonly includeProviders: readonly string[]
   readonly excludeProviders: readonly string[]
+  readonly baseline?: string
 }
 
 const SEVERITIES: readonly Severity[] = ['info', 'warn', 'error']
@@ -44,6 +47,7 @@ const KNOWN_KEYS = new Set<keyof Config>([
   'severityThreshold',
   'includeProviders',
   'excludeProviders',
+  'baseline',
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -99,6 +103,14 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     ? 'info'
     : severity('severityThreshold', raw.severityThreshold)
 
+  let baseline: string | undefined
+  if (raw.baseline !== undefined) {
+    if (typeof raw.baseline !== 'string' || raw.baseline.trim().length === 0) {
+      throw new Error('baseline must be a non-empty string (path to the record file)')
+    }
+    baseline = raw.baseline.trim()
+  }
+
   let rules: Partial<Record<RuleId, Severity | 'off'>> = {}
   if (raw.rules !== undefined) {
     if (!isPlainObject(raw.rules)) throw new Error('rules must be an object')
@@ -122,6 +134,7 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     severityThreshold,
     includeProviders,
     excludeProviders,
+    ...baseline === undefined ? {} : { baseline },
   }
 }
 

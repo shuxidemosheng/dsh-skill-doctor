@@ -250,8 +250,43 @@ Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usag
 | `severityThreshold` | `info` | Output filter |
 | `includeProviders` | `[]` | Only these providers |
 | `excludeProviders` | `[]` | Skip these providers |
+| `baseline` | none | Path to a record file (supports `~`); when set, reports include a follow-up comparison |
 
 Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
+
+## Record & follow-up
+
+One checkup is easy; knowing whether this run is better than the last one is not. The CLI can save a scan as a record (JSON) and diff the next run against it:
+
+```bash
+# First run: check and save the record
+dsh-skill-lint ~/.claude/skills --save skill-doctor-baseline.json
+
+# After fixing: re-examine; the report gains a follow-up section
+dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json
+
+# Once confirmed, store the new state as the next record (diff + save in one command)
+dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skill-doctor-baseline.json
+```
+
+The comparison is grouped by rule — same philosophy as clustering: root causes, not counts:
+
+```text
+## Follow-up comparison
+
+Against the record `skill-doctor-baseline.json` (saved 2026-10-31), by rule:
+
+- ✅ Improved: description too long 4 → 2; description too vague 1 → 0
+- ⚠️ Worse: referenced file missing 0 → 1 (`new-report`)
+- 🆕 New this run: `new-report`
+- 🗑 Gone since last time: `other-pdf` (renamed or removed?)
+
+Overall: 5 → 3 findings.
+```
+
+- The record is plain JSON and can be committed; in CI, run `--compare --json` and gate on a non-empty `comparison.regressed`.
+- Keep the same measuring stick: the record stores the `severityThreshold` and enabled rules it was saved with; on mismatch the report says the numbers are not directly comparable instead of silently diffing.
+- The plugin tools stay read-only: `skill_doctor` never writes. To get the follow-up comparison inside a session, point config `baseline` (table above) at the record; it is only read, and comparison is skipped when unreadable.
 
 ## Limits
 
