@@ -17,3 +17,7 @@ scripts/e2e/out/
 
 # 内部交接笔记：只在本机保留，不入公开仓库
 HANDOFF.md
+
+# 一次性临时脚本，不入库
+_tmp_*
+*.tmp
