@@ -14,3 +14,6 @@ scripts/e2e/out/
 .env.*
 *.pem
 *.key
+
+# 内部交接笔记：只在本机保留，不入公开仓库
+HANDOFF.md
