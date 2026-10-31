@@ -12,7 +12,7 @@ import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
 import { renderFixJson, renderFixMarkdown, type UnfixableHit } from './fixer/report.js'
 import type { ScanResult, Severity } from './types.js'
 
-const VERSION = '0.4.0'
+const VERSION = '0.6.0'
 
 interface CliOptions {
   readonly paths: string[]

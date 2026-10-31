@@ -54,6 +54,31 @@ Move these phrases into the first 500 characters, e.g. start the description wit
 
 Provider, `model-invocable` and rule IDs (SD004 …) stay in a final **"Technical details (skippable)"** section. Use `format: 'json'` or `skill_lint` when you want the raw per-rule report.
 
+## Panel: what the model is calling right now (new in 0.6.0)
+
+A compact bar sits above the conversation input. Click it to see the tool calls of the current session:
+
+```
+🩺 skill-doctor · reading skill nature-citation      3 skills · 1 plugin · 12 tools
+```
+
+**What it shows**
+
+- **Skill loads** — the model loads a skill through the `skill` tool, whose arguments carry the name, so "reading skill X" is exact.
+- **Tool call stream** — the tool name plus the most telling argument (command, path, pattern…), one line each.
+- **Own tools highlighted** — calls to `skill_doctor` / `plugin_doctor` are marked.
+- **Session totals** — how many skills, plugin tool calls and other tools.
+
+**What it cannot show** (dsh limitation, not an omission)
+
+- **Which plugin a tool belongs to** — session events carry `tool/call { name, arguments }` with no provenance.
+- **Calls that scrolled out** — the panel reads the current session window; older calls are gone and the footer says so.
+- **Tool results** — only running/done state, so the panel does not become a second transcript.
+
+It deliberately does **not** register a `sessionProjections` entry (that needs a zod schema, and comparable plugins ship zod inside their bundle); it reads the `useChat` snapshot instead. Net effect: zero host-side changes, 16.7 kB client bundle.
+
+> The panel only loads after a **full restart** of the desktop app.
+
 ## Rules
 
 | ID | Level | Check |
