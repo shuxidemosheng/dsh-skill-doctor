@@ -8,8 +8,10 @@
  *
  * JSON 输出始终是技术形态（`renderLintJson`），机器读它，不做人话改写。
  */
+import { dirname } from 'node:path'
 import { RULES } from '../scanner/rules.js'
 import type { Finding, ScanResult, Severity, SkillLintResult } from '../types.js'
+import { prescriptionOf, prescriptionLine } from './prescriptions.js'
 
 const SEVERITY_LABEL: Record<Severity, string> = { error: 'ERROR', warn: 'WARN', info: 'INFO' }
 
@@ -144,16 +146,20 @@ function plainMessage(finding: Finding): string {
   return '文件头读不出来。'
 }
 
-/** 第一屏的 finding 写法：小标题 + 现在什么情况 + 怎么改。 */
-function plainFindingLines(finding: Finding, bullet: string): string[] {
+/** 技能文件所在目录；dsh 自带的虚拟技能没有本地文件，返回 undefined。 */
+function skillDir(skill: { readonly path?: string }): string | undefined {
+  return skill.path === undefined ? undefined : dirname(skill.path)
+}
+
+/** 第一屏的 finding 写法：小标题 + 现在什么情况 + 处方（能不能一键解决）。 */
+function plainFindingLines(finding: Finding, bullet: string, directory?: string): string[] {
   const meta = RULES[finding.rule]
   const where = finding.line === undefined ? '' : `（第 ${finding.line} 行）`
-  const lines = [
+  return [
     `${bullet} ${SEVERITY_MARK[finding.severity]} **${meta.plainTitle}**${where}`,
     `   现在：${plainMessage(finding)}`,
+    `   处方：${prescriptionLine(finding.rule, finding.suggestion, directory)}`,
   ]
-  if (finding.suggestion !== undefined) lines.push(`   怎么改：${finding.suggestion}`)
-  return lines
 }
 
 /**
@@ -254,10 +260,12 @@ export function renderDoctorMarkdown(result: SkillLintResult, options: ReportOpt
     // 引用块放在顶层，不要嵌在列表项里。
     // “列表项 + 缩进引用块 + 缩进续行”这套写法在不同 Markdown 渲染器里表现不一，
     // 有的会把引用块挤出列表、把下一行拆成单独段落，读起来像断掉了。
+    // 这里给的是**模型实际读到的完整原文**（截到上限为止），不是二次摘要：
+    // 用户要判断的是“我的触发词在不在里面”，摘要会让这个判断失去依据。
     lines.push(
       '**简介**（模型靠它决定“要不要用这个技能”）：',
       '',
-      `> ${preview(description.slice(0, limit)) || '（只有空白字符）'}`,
+      `> ${oneLine(description.slice(0, limit)) || '（只有空白字符）'}`,
       '',
     )
     if (description.length > limit) {
@@ -326,7 +334,7 @@ export function renderDoctorMarkdown(result: SkillLintResult, options: ReportOpt
   } else {
     lines.push('按严重程度排序；带 ⛔ 的最要紧。', '')
     remaining.forEach((finding, index) => {
-      lines.push(...plainFindingLines(finding, `${index + 1}.`), '')
+      lines.push(...plainFindingLines(finding, `${index + 1}.`, skillDir(result.skill)), '')
     })
   }
 
@@ -461,8 +469,10 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
   const sortedTruncated = [...truncated].sort((a, b) => b.skill.description.length - a.skill.description.length)
   const high = sortedTruncated.filter(item => analyzeTruncation(item.skill.description, limit).level === 'high')
   const low = sortedTruncated.filter(item => analyzeTruncation(item.skill.description, limit).level === 'low')
+  // 用 findings.length 而不是 warnings > 0：否则 info 级（BOM、CRLF、名字过长）
+  // 会掉进裂缝——既不在任何分组里，也不在“没问题”里，正文完全看不到。
   const other = result.results.filter(item =>
-    item.errors === 0 && !truncated.includes(item) && item.warnings > 0)
+    item.errors === 0 && !truncated.includes(item) && item.findings.length > 0)
   const ok = result.results.filter(item => item.findings.length === 0)
   const bundled = result.results.filter(item => isBundled(item.skill)).length
 
@@ -487,7 +497,7 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
     for (const item of blocking) {
       lines.push(`### \`${item.skill.name}\``, '')
       item.findings.forEach((finding, index) => {
-        lines.push(...plainFindingLines(finding, `${index + 1}.`))
+        lines.push(...plainFindingLines(finding, `${index + 1}.`, skillDir(item.skill)))
       })
       lines.push('')
     }
@@ -525,7 +535,7 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
     lines.push(`## 其他小问题（${other.length} 个）`, '')
     for (const item of other) {
       lines.push(`### \`${item.skill.name}\``, '')
-      for (const finding of item.findings) lines.push(...plainFindingLines(finding, '-'))
+      for (const finding of item.findings) lines.push(...plainFindingLines(finding, '-', skillDir(item.skill)))
       lines.push('')
     }
   }
@@ -590,6 +600,8 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
         file: finding.file ?? null,
         line: finding.line ?? null,
         suggestion: finding.suggestion ?? null,
+        // 处方类别单独给出来，CI 可以据此区分“能自动修”和“必须人工”。
+        prescription: prescriptionOf(finding.rule),
       })),
     })),
   }, null, 2)

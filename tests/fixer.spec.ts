@@ -6,6 +6,7 @@ import { resolveConfig } from '../src/config'
 import { applyFixes } from '../src/fixer/apply'
 import { planFixes, type FixTarget } from '../src/fixer/plan'
 import { renderFixMarkdown } from '../src/fixer/report'
+import { renderLintMarkdown } from '../src/tools/report'
 import { scanSkillFile } from '../src/scanner/fs-scan'
 import { lintSkills } from '../src/scanner/scan'
 import type { ScanResult } from '../src/types'
@@ -165,5 +166,18 @@ describe('renderFixMarkdown', () => {
       if (lines[index]!.startsWith('#')) expect(lines[index - 1]).toBe('')
     }
     expect(markdown).toContain('## 这些没动，因为改法不唯一')
+  })
+})
+
+describe('lint report prescriptions', () => {
+  it('marks a byte-level problem as auto-fixable and names the command', async () => {
+    // 只有 CLI 扫磁盘时才拿得到原文；这条同时证明 autofix 处方在真实渲染路径上生效。
+    const file = await writeSkill({ bom: true, crlf: true })
+    const markdown = renderLintMarkdown(await lint([file]))
+
+    expect(markdown).toContain('处方：')
+    expect(markdown).toMatch(/🔧 能自动修/)
+    expect(markdown).toContain('--apply')
+    expect(markdown).toContain('demo-skill')
   })
 })

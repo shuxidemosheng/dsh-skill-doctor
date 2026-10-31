@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-doctor",
-  "description": "Lint, diagnose and A/B-test DeepSeek Harness skills, and check installed plugins for structural conflicts: frontmatter, description limits, body budget, resource references, shadowed names, and why a skill is not loading. 技能体检 + 插件冲突检查：静态 lint + 运行时诊断。",
+  "description": "Diagnose DeepSeek Harness skills and plugins — whether a skill loads and gets picked by the model, whether a plugin actually started or fights another one over a loader entry, and what to fix first — plus a dock panel showing which skills and tools the model is calling right now. 技能与插件体检 + 实时活动面板。",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -21,7 +21,7 @@
     "type": "git",
     "url": "git+https://github.com/shuxidemosheng/dsh-skill-doctor.git"
   },
-  "version": "0.4.0",
+  "version": "0.6.0",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -31,7 +31,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./client": {
+      "default": "./lib/client.js"
+    }
   },
   "bin": {
     "dsh-skill-lint": "./lib/cli.js"
@@ -49,10 +52,17 @@
     "manifestVersion": 1,
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "client-ui-slots",
+        "client-ui-conversation"
+      ]
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/index.js --legal-comments=none --packages=external && esbuild src/cli.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/cli.js --legal-comments=none --packages=external",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/index.js --legal-comments=none --packages=external && esbuild src/cli.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/cli.js --legal-comments=none --packages=external && node scripts/build-client.mjs",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "prepublishOnly": "npm run build",
@@ -75,6 +85,8 @@
     "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-working-directory": "0.2.1-alpha.2",
     "@types/node": "^24.0.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"

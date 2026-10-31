@@ -2,6 +2,8 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { renderPluginJson, renderPluginMarkdown } from '../src/plugins/report'
+import type { RuntimeSummary } from '../src/plugins/runtime'
 import { parsePatchIds, scanProfile } from '../src/plugins/scan'
 
 /** 每个用例一个临时 DSH_HOME，避免读真实 profile。 */
@@ -121,5 +123,71 @@ describe('scanProfile', () => {
     const report = await scanProfile('nope')
     expect(report.bundles).toEqual([])
     expect(report.notes[0]).toMatch(/读不到/)
+  })
+})
+
+describe('renderPluginMarkdown', () => {
+  it('says the runtime was not checked when the CLI renders it', async () => {
+    const profileDir = await writeProfile(['a'], { a: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- insert://n    - id: only-me\n      name: a\n')
+    const markdown = renderPluginMarkdown(await scanProfile('demo'))
+
+    expect(markdown).toContain('## 运行时状态')
+    expect(markdown).toContain('命令行模式')
+    // 核心要求：不能让人把“没查”读成“没问题”。
+    expect(markdown).toContain('不等于')
+  })
+
+  it('names failed plugins and puts them first in the verdict', async () => {
+    const profileDir = await writeProfile(['a'], { a: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- insert://n    - id: only-me\n      name: a\n')
+    const runtime: RuntimeSummary = {
+      status: 'ok',
+      enabled: 1,
+      failed: ['dsh-broken'],
+      phases: { failed: 1 },
+      matched: 1,
+      declared: 1,
+      missingOwnTools: [],
+      toolCount: 12,
+    }
+    const markdown = renderPluginMarkdown(await scanProfile('demo'), runtime)
+
+    expect(markdown).toContain('`dsh-broken`')
+    expect(markdown).toContain('启动了但失败')
+    expect(markdown).toMatch(/\*\*结论：有 1 个插件启动了但失败/)
+  })
+
+  it('qualifies a clean verdict when the runtime was unavailable', async () => {
+    const profileDir = await writeProfile(['a'], { a: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- insert://n    - id: only-me\n      name: a\n')
+    const runtime: RuntimeSummary = {
+      status: 'unavailable',
+      note: '当前 dsh 没有暴露 pluginInventory 服务',
+      enabled: 0,
+      failed: [],
+      phases: {},
+      matched: 0,
+      declared: 1,
+      missingOwnTools: [],
+      toolCount: 12,
+    }
+    const markdown = renderPluginMarkdown(await scanProfile('demo'), runtime)
+
+    expect(markdown).toContain('运行时状态这次没查到')
+    expect(markdown).toContain('没有暴露 pluginInventory')
+  })
+
+  it('adds a prescription to every conflict in JSON', async () => {
+    const profileDir = await writeProfile(['a', 'a'], { a: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- insert://n    - id: only-me\n      name: a\n')
+    const parsed = JSON.parse(renderPluginJson(await scanProfile('demo'))) as {
+      conflicts: { rule: string; prescription: { kind: string } }[]
+    }
+
+    expect(parsed.conflicts.length).toBeGreaterThan(0)
+    for (const conflict of parsed.conflicts) {
+      expect(conflict.prescription.kind).toMatch(/^(autofix|command|manual)$/)
+    }
   })
 })

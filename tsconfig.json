@@ -14,5 +14,8 @@
     "skipLibCheck": true,
     "noEmitOnError": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // client.tsx 是浏览器侧代码（JSX + DOM），由 tsconfig.client.json 单独检查、
+  // 由 scripts/build-client.mjs 用 esbuild 打包，不能进 Node 侧的产出。
+  "exclude": ["src/client.tsx"]
 }

@@ -54,6 +54,31 @@ Move these phrases into the first 500 characters, e.g. start the description wit
 
 Provider, `model-invocable` and rule IDs (SD004 …) stay in a final **"Technical details (skippable)"** section. Use `format: 'json'` or `skill_lint` when you want the raw per-rule report.
 
+## Panel: what the model is calling right now (new in 0.6.0)
+
+A compact bar sits above the conversation input. Click it to see the tool calls of the current session:
+
+```
+🩺 skill-doctor · reading skill nature-citation      3 skills · 1 plugin · 12 tools
+```
+
+**What it shows**
+
+- **Skill loads** — the model loads a skill through the `skill` tool, whose arguments carry the name, so "reading skill X" is exact.
+- **Tool call stream** — the tool name plus the most telling argument (command, path, pattern…), one line each.
+- **Own tools highlighted** — calls to `skill_doctor` / `plugin_doctor` are marked.
+- **Session totals** — how many skills, plugin tool calls and other tools.
+
+**What it cannot show** (dsh limitation, not an omission)
+
+- **Which plugin a tool belongs to** — session events carry `tool/call { name, arguments }` with no provenance.
+- **Calls that scrolled out** — the panel reads the current session window; older calls are gone and the footer says so.
+- **Tool results** — only running/done state, so the panel does not become a second transcript.
+
+It deliberately does **not** register a `sessionProjections` entry (that needs a zod schema, and comparable plugins ship zod inside their bundle); it reads the `useChat` snapshot instead. Net effect: zero host-side changes, 16.7 kB client bundle.
+
+> The panel only loads after a **full restart** of the desktop app.
+
 ## Rules
 
 | ID | Level | Check |
@@ -125,15 +150,31 @@ Two rules are fixable: **SD013 BOM** (drop the leading three bytes) and **SD014 
 
 Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usage/read error.
 
-### `plugin_doctor` (new in 0.3.0)
+### `plugin_doctor` (new in 0.3.0, runtime checks in 0.5.0)
 
-Checks the plugins installed in a profile for structural conflicts: a bundle listed twice, two plugins inserting the same loader entry, two plugins patching the same row (for example `agent-default-model`), a bundle whose package is missing, or a dependency that is installed but not enabled.
+Answers two questions: **is it wired up correctly** (disk) and **did it actually start** (runtime).
 
 ```json
 { "profile": "desktop" }
 ```
 
-It reads `profiles/<name>/package.json` plus each plugin's `cordis.patch.yml`, so it needs no runtime state and changes nothing. Runtime tool-name collisions are **not** covered: the tool registry does not expose which plugin registered a name, and the report says so instead of guessing. Shipped `@deepseek-ai/*` bundles live inside `app.asar`, so entry conflicts are compared between profile plugins only.
+On disk it reads `profiles/<name>/package.json` plus each plugin's `cordis.patch.yml`: a bundle listed twice (PL001), two plugins inserting the same loader entry (PL002), two plugins patching the same row such as `agent-default-model` (PL003), a bundle whose package is missing or a dependency installed but not enabled (PL004).
+
+At runtime it soft-probes `pluginInventory` for each bundle's fiber phase and calls `ctx.tools.schemas(exec.agent)` for the tools actually visible in this session:
+
+| Evidence | Strength | What the report says |
+|---|---|---|
+| enabled but `fiberPhase` is `failed` | certain | names the plugin; its tools will never appear |
+| service missing or timed out | — | says the check did not run, and that this is **not** the same as "no problems" |
+| one of our own tools missing from the list | medium | lists both possibilities: taken by a same-named tool, or hidden by the agent scope |
+
+`pluginInventory` is only mounted in the desktop profile (the headless template omits it), so headless reports always degrade to "not checked".
+
+**Not covered:**
+
+- **Which plugin registered a tool name** — the registry has no owner field. `schemas()` gives every name but no provenance, so a collision can only ever be reported as suspected, never pinned on a plugin.
+- **Why a plugin failed** — the inventory projects the fiber phase but not the error, and dsh writes no startup log to disk.
+- `@deepseek-ai/*` bundles ship inside `app.asar`, so entry conflicts are compared between profile plugins only.
 
 ## Config
 
@@ -164,7 +205,9 @@ It never executes a skill's scripts, never modifies a file, and never sends skil
 - SD012 is heuristic, not a malware verdict.
 - Token estimates are approximate (ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char).
 - Duplicate detection scans configured roots only; it cannot see every internal registry candidate.
-- It does not judge whether a skill is well written, and does not auto-fix.
+- It does not judge whether a skill is well written. Auto-fix covers two byte-level rules only (BOM, CRLF); anything semantic is left alone.
+- Runtime checks need the **desktop profile** (`pluginInventory` is mounted there). In headless the report says the check did not run — do not read that as "all good".
+- The reason a plugin failed is not available: the runtime snapshot carries the fiber phase only, no error, and dsh keeps no startup log on disk.
 - Remote/virtual skills have no file-level checks.
 
 ## Development
