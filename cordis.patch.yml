@@ -1,0 +1,17 @@
+# dsh-skill-doctor — 技能体检
+#
+# 本行只负责把插件挂进 profile；所有检查都是只读的。
+# 外部技能目录（Claude / Codex / ZCode）默认不扫描，需要时通过 extraRoots 显式开启：
+#
+#   config:
+#     extraRoots:
+#       - ~/.claude/skills
+#       - ~/.codex/skills
+#       - ~/.zcode/skills
+#
+- insert:
+    - id: skill-doctor
+      name: dsh-skill-doctor
+      config:
+        maxDescriptionLength: 500
+        maxBodyTokens: 8000

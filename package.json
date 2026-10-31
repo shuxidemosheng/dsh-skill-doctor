@@ -1,0 +1,85 @@
+{
+  "name": "dsh-skill-doctor",
+  "description": "Lint, diagnose and A/B-test DeepSeek Harness skills: frontmatter, description limits, body budget, resource references, shadowed names, and why a skill is not loading. 技能体检：静态 lint + 运行时诊断 + 可选 A/B 对比。",
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "plugin",
+    "skills",
+    "skill",
+    "lint",
+    "doctor",
+    "diagnostics",
+    "agent"
+  ],
+  "homepage": "https://github.com/shuxidemosheng/dsh-skill-doctor#readme",
+  "bugs": {
+    "url": "https://github.com/shuxidemosheng/dsh-skill-doctor/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shuxidemosheng/dsh-skill-doctor.git"
+  },
+  "version": "0.2.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-skill-lint": "./lib/cli.js"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.en.md"
+  ],
+  "engines": {
+    "node": ">=24",
+    "dsh": ">=0.2.0-rc.2"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/index.js --legal-comments=none --packages=external && esbuild src/cli.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/cli.js --legal-comments=none --packages=external",
+    "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
+    "prepublishOnly": "npm run build",
+    "e2e": "node scripts/e2e-headless.mjs --group A",
+    "e2e:all": "node scripts/e2e-headless.mjs --group A,B,C,D",
+    "e2e:stub": "node scripts/e2e/stub-conflict.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.4",
+    "@deepseek-ai/dsh-skill": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2",
+    "@deepseek-ai/dsh-working-directory": ">=0.2.0-rc.2"
+  },
+  "dependencies": {
+    "yaml": "^2.4.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5-alpha.1",
+    "@deepseek-ai/dsh-skill": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-tools": "0.2.1-alpha.2",
+    "@deepseek-ai/dsh-working-directory": "0.2.1-alpha.2",
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
