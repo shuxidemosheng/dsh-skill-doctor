@@ -5,10 +5,13 @@
  * 断言原则：只断言结构（工具名、入参、状态、固定产品文案、JSON 形状），
  * 绝不断言模型措辞 —— 模型有随机性，断措辞会天天红。
  */
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import * as fx from './fixtures.mjs'
 
 /** 真实技能根，可用 E2E_SKILL_ROOT 覆盖。 */
-export const REAL_SKILL_ROOT = process.env.E2E_SKILL_ROOT ?? 'C:/Users/fenghaoyu/.claude/skills'
+// 默认扫当前用户的 Claude 技能目录；不写死某个人的路径，别人克隆后也能直接跑。
+export const REAL_SKILL_ROOT = process.env.E2E_SKILL_ROOT ?? join(homedir(), '.claude', 'skills')
 
 /** 单技能诊断的标准任务文本：明确工具名、明确 JSON 入参、要求原样输出。 */
 function doctorTask(args, extra = '') {
