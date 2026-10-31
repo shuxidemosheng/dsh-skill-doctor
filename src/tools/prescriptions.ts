@@ -28,7 +28,7 @@ const KIND_LABEL: Record<PrescriptionKind, string> = {
 }
 
 /** 插件规则 ID；技能规则来自 `RuleId`。 */
-export type PluginRuleId = 'PL001' | 'PL002' | 'PL003' | 'PL004' | 'PL005'
+export type PluginRuleId = 'PL001' | 'PL002' | 'PL003' | 'PL004' | 'PL005' | 'PL006'
 
 /**
  * 规则 → 处方类别。
@@ -59,6 +59,7 @@ const KIND_BY_RULE: Readonly<Record<RuleId | PluginRuleId, PrescriptionKind>> = 
   PL003: 'manual',
   PL004: 'command', // enable / remove / add，一条命令解决
   PL005: 'manual', // 预留规则，目前不产出
+  PL006: 'manual', // 技能链路被谁改是意图问题：改回来还是补 customSkillDirs 由人决定
 }
 
 /** 查一条规则的处方类别；未知规则一律按人工处理。 */

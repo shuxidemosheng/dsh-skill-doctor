@@ -22,7 +22,7 @@ import { renderFixJson, renderFixMarkdown, type UnfixableHit } from './fixer/rep
 import { readDshVersion } from './version-check.js'
 import type { ScanResult, Severity } from './types.js'
 
-const VERSION = '0.7.0'
+const VERSION = '0.8.0'
 
 interface CliOptions {
   readonly paths: string[]

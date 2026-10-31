@@ -576,6 +576,11 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
       '# Skill Doctor：技能体检报告',
       '',
       '没有找到技能。确认一下工作目录，或者把技能目录加到 `extraRoots`。',
+      '',
+      '还有一个常见原因在**插件层**：某个插件的 patch 把技能目录改了或关了，',
+      '症状同样是"一个技能都看不到"，但技能文件本身没有任何问题。',
+      '让模型调一次 `plugin_doctor`（或跑 `dsh-skill-lint --plugins`）做会诊，',
+      '它的「会诊」章节会列出所有动了技能链路的插件层改动。',
     ].join('\n')
   }
 

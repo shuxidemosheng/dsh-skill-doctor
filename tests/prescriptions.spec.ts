@@ -4,7 +4,7 @@ import { RULE_IDS } from '../src/scanner/rules'
 import { prescribeKind, prescriptionLine, prescriptionOf } from '../src/tools/prescriptions'
 
 /** 插件侧的规则 ID（不在 RuleId 联合类型里）。 */
-const PLUGIN_RULES = ['PL001', 'PL002', 'PL003', 'PL004', 'PL005'] as const
+const PLUGIN_RULES = ['PL001', 'PL002', 'PL003', 'PL004', 'PL005', 'PL006'] as const
 
 describe('prescriptions', () => {
   it('classifies every skill rule and every plugin rule', () => {

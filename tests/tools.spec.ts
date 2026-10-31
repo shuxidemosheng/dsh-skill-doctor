@@ -180,6 +180,16 @@ describe('skill_doctor', () => {
     expect(output).toMatch(/没问题（1 个）/)
   })
 
+  it('points to the plugin layer when zero skills are visible', async () => {
+    // 会诊的反方向：技能全没了时，别只盯着技能文件——插件 patch 改目录是同症状的常见根因。
+    const env = createFakeCtx([])
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', {}))
+    expect(output).toMatch(/没有找到技能/)
+    expect(output).toContain('插件层')
+    expect(output).toContain('plugin_doctor')
+  })
+
   it('reports duplicate names in single-skill mode when extraRoots is given', async () => {
     // 回归 D1：单技能分支曾经直接 lintSkill(skill)，导致 extraRoots 里的同名副本被忽略。
     const env = await envWith('dup-a/dup')

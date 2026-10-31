@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { renderPluginJson, renderPluginMarkdown } from '../src/plugins/report'
 import type { RuntimeSummary } from '../src/plugins/runtime'
-import { parsePatchIds, scanProfile } from '../src/plugins/scan'
+import { parsePatchIds, parseSkillTouchpoints, scanProfile } from '../src/plugins/scan'
 
 /** 每个用例一个临时 DSH_HOME，避免读真实 profile。 */
 let home: string
@@ -123,6 +123,94 @@ describe('scanProfile', () => {
     const report = await scanProfile('nope')
     expect(report.bundles).toEqual([])
     expect(report.notes[0]).toMatch(/读不到/)
+  })
+})
+
+describe('parseSkillTouchpoints', () => {
+  it('extracts skill-chain config keys from both insert and patch entries', () => {
+    const points = parseSkillTouchpoints([
+      '- insert:',
+      '    - id: skill-filesystem',
+      '      name: pkg-a',
+      '      config:',
+      '        includeDefaultRoots: false',
+      '        customSkillDirs: ["D:/skills"]',
+      '- id: skill-doctor',
+      '  config:',
+      '    maxDescriptionLength: 500',
+      '- id: agent-default-model',
+      '  config:',
+      '    includeDefaultRoots: false',
+    ].join('\n'))
+    // 只关心含 skill 的条目；skill-doctor 的 maxDescriptionLength 不在关心列表里。
+    expect(points).toEqual([
+      { entryId: 'skill-filesystem', key: 'includeDefaultRoots', value: 'false' },
+      { entryId: 'skill-filesystem', key: 'customSkillDirs', value: '["D:/skills"]' },
+    ])
+  })
+
+  it('flags a fully disabled skill entry', () => {
+    const points = parseSkillTouchpoints('- id: skill-filesystem\n  disabled: true\n')
+    expect(points).toEqual([{ entryId: 'skill-filesystem', key: 'disabled', value: 'true' }])
+  })
+
+  it('returns empty for broken yaml', () => {
+    expect(parseSkillTouchpoints('- insert: [unclosed')).toEqual([])
+  })
+})
+
+describe('consultation (PL006)', () => {
+  it('warns when a bundle kills the whole skill entry', async () => {
+    const profileDir = await writeProfile(['killer'], { killer: '1.0.0' })
+    await writeBundle(profileDir, 'killer', '- id: skill-filesystem\n  disabled: true\n')
+
+    const report = await scanProfile('demo')
+    const conflict = report.conflicts.find(item => item.rule === 'PL006')
+    expect(conflict?.severity).toBe('warn')
+    expect(conflict?.detail).toContain('技能条目 skill-filesystem')
+    expect(conflict?.detail).toContain('技能全没了')
+  })
+
+  it('warns when default roots are off and nobody provides customSkillDirs', async () => {
+    const profileDir = await writeProfile(['a'], { a: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- id: skill-filesystem\n  config:\n    includeDefaultRoots: false\n')
+
+    const report = await scanProfile('demo')
+    const conflict = report.conflicts.find(item => item.rule === 'PL006')
+    expect(conflict?.detail).toContain('没有任何插件配置 customSkillDirs')
+  })
+
+  it('stays quiet about PL006 when customSkillDirs exists in another bundle', async () => {
+    // 替代目录写在别的 bundle 里同样有效，不能只看同一个插件。
+    const profileDir = await writeProfile(['a', 'b'], { a: '1.0.0', b: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- id: skill-filesystem\n  config:\n    includeDefaultRoots: false\n')
+    await writeBundle(profileDir, 'b', '- id: skill-filesystem-2\n  config:\n    customSkillDirs: ["D:/skills"]\n')
+
+    const report = await scanProfile('demo')
+    expect(report.conflicts.filter(item => item.rule === 'PL006')).toEqual([])
+    // 但会诊素材要列出来：这两行就是“技能从哪来”的全部答案。
+    const points = report.bundles.flatMap(bundle => bundle.skillTouchpoints)
+    expect(points.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('renders the consultation section with per-bundle touchpoints', async () => {
+    const profileDir = await writeProfile(['a'], { a: '1.0.0' })
+    await writeBundle(profileDir, 'a', '- id: skill-filesystem\n  config:\n    includeDefaultRoots: false\n')
+    const markdown = renderPluginMarkdown(await scanProfile('demo'))
+
+    expect(markdown).toContain('## 会诊：技能链路交叉检查')
+    expect(markdown).toContain('`a` → `skill-filesystem.includeDefaultRoots` = `false`')
+    // 有 PL006 时给出因果结论，而不是模糊的“供参考”。
+    expect(markdown).toContain('根因大概率在这里')
+  })
+
+  it('says the plugin layer is clean when nobody touches the skill chain', async () => {
+    const profileDir = await writeProfile(['x'], { x: '1.0.0' })
+    await writeBundle(profileDir, 'x', '- insert:\n    - id: only-me\n      name: x\n')
+    const markdown = renderPluginMarkdown(await scanProfile('demo'))
+
+    expect(markdown).toContain('不在插件配置层')
+    expect(markdown).toContain('skill_doctor')
   })
 })
 

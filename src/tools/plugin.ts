@@ -30,6 +30,7 @@ export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnTy
     name: 'plugin_doctor',
     description: 'Check the installed DeepSeek Harness plugins in a profile, on disk and at runtime: structural conflicts (the same loader entry inserted or patched by two plugins, a bundle listed twice, a dependency installed but not enabled, an enabled bundle whose package is missing) plus whether each bundle actually started (a bundle whose fiber phase is failed never provides its tools). '
       + 'Use it when a plugin\'s tool does not show up, when two plugins seem to fight over the same setting, or after installing several plugins. '
+      + 'Also use it for cross-layer symptoms: when skills suddenly disappear or shrink, a plugin patch may have changed the skill catalogue config — the consultation section lists every bundle touchpoint on the skill chain. '
       + 'It only reads profile files and runtime state; it never changes, enables or loads a plugin. Two things it cannot tell you: which plugin registered a given tool name (the registry has no owner field), and why a plugin failed (the inventory projects the fiber phase but not the error). '
       + 'The report is Markdown: show it to the user as Markdown, never inside a code block.',
     parameters: {

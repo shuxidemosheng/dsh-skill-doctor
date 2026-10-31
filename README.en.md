@@ -24,6 +24,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Shows what the model actually sees.** Not "description too long", but the truncated text **verbatim** — you can tell at a glance whether your trigger words made the cut.
 - **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated.
 - **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
+- **Consults across layers.** "0 skills" does not mean the skills broke — the plugin report lists every patch that touched the skill chain (who → which entry → which key), and the skill report points back at the plugin layer when it comes up empty.
 - **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
@@ -147,6 +148,9 @@ Explains why a skill is missing, never selected, or failing to load: winning pro
 | PL002 | warn | Two plugins inserting the same loader entry (only one wins) |
 | PL003 | warn | Two plugins patching the same row (later one silently wins) |
 | PL004 | error/info | Enabled but package missing / installed but not enabled |
+| PL006 | warn | A plugin touched the skill chain: disabled the skill entry, or turned off default roots with no replacement |
+
+**Consultation: skills × plugins.** `skill_doctor` handles skills, `plugin_doctor` handles plugins — but real failures often span both layers: a plugin patch changes the skill catalogue, the skill report just says "0 skills", and it looks like the skills broke. The plugin report's consultation section puts every bundle touchpoint on the skill chain (who → which entry → which key) on one table; conversely, the skill report points at the plugin layer when it finds nothing. One entry point, one cross-check.
 
 **At runtime** it soft-probes `pluginInventory` for each bundle's fiber phase and calls `ctx.tools.schemas(exec.agent)` for the tools actually visible in this session:
 
