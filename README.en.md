@@ -30,8 +30,10 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 ## Install
 
 ```bash
-dsh plugin --profile <your-profile> add dsh-skill-doctor@0.6.0
+dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
+
+That installs the latest version; pin it by appending `@0.6.0` if you prefer.
 
 Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 

@@ -30,8 +30,10 @@
 ## 安装
 
 ```bash
-dsh plugin --profile <你的profile> add dsh-skill-doctor@0.6.0
+dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
+
+装的是最新版；想锁定版本就在名字后面加 `@0.6.0`。
 
 装完**完全退出并重开** dsh（面板等客户端代码只在启动时加载）。
 
