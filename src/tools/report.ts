@@ -156,6 +156,33 @@ function plainFindingLines(finding: Finding, bullet: string): string[] {
   return lines
 }
 
+/**
+ * 报告摘要表。
+ *
+ * 用户真正要的是“像一份报告”，而不是一段散文：先给一张能一眼扫完的表，
+ * 再展开细节。表在聊天里渲染成表格，在纯文本环境里也仍然对齐可读。
+ */
+function summaryTable(result: SkillLintResult, truncation: TruncationInfo, limit: number): string[] {
+  const description = result.skill.description
+  const impact = truncation.level === 'high'
+    ? `大（${truncation.newTriggers.length} 个触发说法看不到）`
+    : truncation.level === 'low' ? '不大（被切掉的多是细节）' : '无'
+  const action = result.errors > 0
+    ? '先修上面的错误，否则技能可能加载不了'
+    : truncation.level === 'high'
+      ? `把触发词移到简介前 ${limit} 字以内`
+      : truncation.level === 'low' ? '可以不动，想更稳就压短简介' : '不用改'
+  return [
+    '| 项目 | 情况 |',
+    '|---|---|',
+    `| 技能 | \`${result.skill.name}\` |`,
+    `| 简介 | ${description.length} 字，模型可见前 ${Math.min(description.length, limit)} 字 |`,
+    `| 截断影响 | ${impact} |`,
+    `| 建议动作 | ${action} |`,
+    '',
+  ]
+}
+
 /** 单技能结论：一句话回答“能不能用、模型看不看得见”。 */
 function verdictOf(result: SkillLintResult, truncation: TruncationInfo, limit: number): string {
   if (result.errors > 0) return '有错误，这个技能很可能根本用不了。'
@@ -216,6 +243,7 @@ export function renderDoctorMarkdown(result: SkillLintResult, options: ReportOpt
     '',
     `**结论：${verdictOf(result, truncation, limit)}**`,
     '',
+    ...summaryTable(result, truncation, limit),
     '## 模型看到的信息',
     '',
   ]

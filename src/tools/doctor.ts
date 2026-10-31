@@ -18,7 +18,8 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
   return defineTool({
     name: 'skill_doctor',
     description: 'Diagnose DeepSeek Harness skills in one screen. With a skill name, returns a verdict (usable / model-invisible / description truncated / broken), the exact catalog entry the model sees, ranked reasons, and copyable fixes. Without a name, returns a grouped report: which skills need fixing, which descriptions get truncated, which have other warnings, and which are healthy. '
-      + 'Use this first when a skill does not appear, does not respond, or seems ignored. It only reads files and never changes or executes a skill.',
+      + 'Use this first when a skill does not appear, does not respond, or seems ignored. It only reads files and never changes or executes a skill. '
+      + 'The report is Markdown: show it to the user as Markdown (headings, table, emphasis) — never paste it inside a code block or quote it as raw text.',
     parameters: {
       name: { type: 'string', description: 'Diagnose one skill by exact name; omit for a grouped report of every visible skill.' },
       extraRoots: {

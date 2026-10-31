@@ -123,6 +123,26 @@ export const CASES = [
     },
   },
 
+  {
+    id: 'A8',
+    group: 'A',
+    title: '展示形态：模型应把报告按 Markdown 展示，而不是塞进代码块',
+    // 用户真实用法：让模型“展示给我看”，不希望看到一堆 ``` 包着的原始 Markdown。
+    task: '用 skill_doctor 查一下 nature-citation，然后把体检报告直接展示给我看。',
+    setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
+    expect: {
+      exitCode: 0,
+      tool: 'skill_doctor',
+      custom: async ({ finalText }) => {
+        const text = String(finalText ?? '')
+        const failures = []
+        if (text.includes('```')) failures.push('最终回答里出现了代码块围栏（```），报告被当成原始文本贴出来了')
+        if (!text.includes('结论')) failures.push('最终回答里没有结论段')
+        return failures
+      },
+    },
+  },
+
   // ---------- B 边界与异常 ----------
   {
     id: 'B1',
