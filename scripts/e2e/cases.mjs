@@ -122,7 +122,9 @@ export const CASES = [
       exitCode: 0,
       tool: 'plugin_doctor',
       inputMatch: { profile: 'headless' },
-      resultIncludes: ['插件体检', '结论：'],
+      // headless 模板不挂 plugin-inventory，所以「运行时状态」这一节必然是降级文案；
+      // 只要章节在、且不谎报，就算通过。桌面端才会真正读到 fiberPhase。
+      resultIncludes: ['插件体检', '结论：', '运行时状态'],
     },
   },
 
@@ -193,7 +195,14 @@ export const CASES = [
     title: 'BOM + CRLF：编码规则在真实运行时可见',
     task: doctorTask({}),
     setup: async () => ({ skillDirs: [await fx.bomCrlfRoot()] }),
-    expect: { exitCode: 0, tool: 'skill_doctor', resultIncludes: ['一共检查了'], resultExcludes: ['SD001'] },
+    // 用例名说的是“可见”，断言就必须验到可见：这两条是 info 级，
+    // 曾经掉进分组裂缝——正文完全看不到，只出现在文末技术细节里。
+    expect: {
+      exitCode: 0,
+      tool: 'skill_doctor',
+      resultIncludes: ['一共检查了', '处方：', '能自动修'],
+      resultExcludes: ['SD001'],
+    },
   },
   {
     id: 'B5',

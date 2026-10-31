@@ -1,13 +1,23 @@
 /** 插件体检报告渲染：和技能报告同一套语言——第一屏人话，技术细节收在文末。 */
 import type { PluginConflict, PluginReport } from './scan.js'
 import { sortConflicts } from './scan.js'
+import type { RuntimeSummary } from './runtime.js'
+import { prescriptionLine, prescriptionOf } from '../tools/prescriptions.js'
 
 const SEVERITY_MARK = { error: '⛔', warn: '⚠️', info: '💡' } as const
 
 /** 结论句：一句话说清有没有冲突、是哪一类。 */
-function verdict(report: PluginReport, conflicts: readonly PluginConflict[]): string {
+function verdict(
+  report: PluginReport,
+  conflicts: readonly PluginConflict[],
+  runtime: RuntimeSummary | undefined,
+): string {
   const errors = conflicts.filter(item => item.severity === 'error').length
   const warns = conflicts.filter(item => item.severity === 'warn').length
+  // 运行时失败是唯一"已经确定坏了"的证据，优先级高于磁盘上的结构问题。
+  if (runtime !== undefined && runtime.failed.length > 0) {
+    return `有 ${runtime.failed.length} 个插件启动了但失败，它们提供的功能不会出现。`
+  }
   if (report.bundles.length === 0 && report.conflicts.length === 0) {
     return '这个 profile 里没有装任何插件。'
   }
@@ -17,7 +27,11 @@ function verdict(report: PluginReport, conflicts: readonly PluginConflict[]): st
     return `发现 ${warns} 处冲突：${kinds.join('、')}。`
   }
   if (conflicts.length > 0) return '没有冲突，只有几条“装了但没启用”的提示。'
-  return '没发现冲突：这些插件的 loader 条目互不重叠。'
+  // 没查到运行时状态时，结论必须带限定，否则会被读成“一定没问题”。
+  const caveat = runtime !== undefined && runtime.status !== 'ok'
+    ? '（磁盘上没有冲突；运行时状态这次没查到）'
+    : ''
+  return `没发现冲突：这些插件的 loader 条目互不重叠${caveat}。`
 }
 
 /** 来源列：link:/file: 原样显示，纯版本号标成 registry，没有 spec 说明是自带。 */
@@ -27,20 +41,30 @@ function formatSource(source: string | undefined): string {
   return `registry ${source}`
 }
 
-/** 报告摘要表：先给能一眼扫完的四行，再展开细节。 */
-function summaryTable(report: PluginReport, conflicts: readonly PluginConflict[]): string[] {
+/** 报告摘要表：先给能一眼扫完的几行，再展开细节。 */
+function summaryTable(
+  report: PluginReport,
+  conflicts: readonly PluginConflict[],
+  runtime: RuntimeSummary | undefined,
+): string[] {
   const shipped = report.bundles.filter(bundle => bundle.availability === 'shipped').length
   const missing = report.bundles.filter(bundle => bundle.availability === 'missing').length
   const local = report.bundles.length - shipped - missing
   const error = conflicts.filter(item => item.severity === 'error').length
   const warn = conflicts.filter(item => item.severity === 'warn').length
+  const runtimeCell = runtime === undefined
+    ? '命令行模式，不检查'
+    : runtime.status === 'ok'
+      ? `${runtime.enabled} 个在跑${runtime.failed.length > 0 ? `，**${runtime.failed.length} 个失败**` : ''}`
+      : `**没查到**（${runtime.status === 'unavailable' ? '这个 dsh 没暴露' : runtime.status === 'timeout' ? '读取超时' : '读取出错'}）`
   return [
     '| 项目 | 情况 |',
     '|---|---|',
     `| Profile | \`${report.profileName}\` |`,
     `| 插件 | ${report.bundles.length} 个（本地 ${local} / dsh 自带 ${shipped} / 缺失 ${missing}） |`,
+    `| 运行时 | ${runtimeCell} |`,
     `| 冲突 | ${error > 0 ? `**${error} 个严重**` : '0 个严重'}，${warn} 个警告 |`,
-    `| 结论 | ${verdict(report, conflicts)} |`,
+    `| 结论 | ${verdict(report, conflicts, runtime)} |`,
     '',
   ]
 }
@@ -54,19 +78,96 @@ function bundleRow(bundle: PluginReport['bundles'][number]): string {
   return `| \`${bundle.name}\` | ${version} | ${formatSource(bundle.source)} | ${state} |`
 }
 
-/** 单条冲突展开成“涉及/现在/怎么改”。 */
+/** 单条冲突展开成“涉及/现在/处方”。 */
 function conflictBlock(conflict: PluginConflict, index: number): string[] {
   return [
     `${index}. ${SEVERITY_MARK[conflict.severity]} **${conflict.title}**`,
     `   涉及：${conflict.involved.map(name => `\`${name}\``).join('、')}`,
     `   现在：${conflict.detail}`,
-    ...conflict.suggestion === undefined ? [] : [`   怎么改：${conflict.suggestion}`],
+    `   处方：${prescriptionLine(conflict.rule, conflict.suggestion)}`,
     '',
   ]
 }
 
+/**
+ * 运行时状态章节。
+ *
+ * 这一节的主基调是「没查到 ≠ 没问题」：探测失败时必须明确写出缺失，
+ * 否则用户会把"没报错"读成"插件都在正常运行"。
+ */
+function runtimeSection(runtime: RuntimeSummary | undefined): string[] {
+  if (runtime === undefined) {
+    return [
+      '## 运行时状态',
+      '',
+      '命令行模式读不到运行时状态（`dsh-skill-lint` 不在 dsh 进程里）。',
+      '**这不等于插件都正常**：上面的结论只基于磁盘文件，插件可能装了却没跑起来——这一项要在会话里用 `plugin_doctor` 才查得到。',
+      '',
+    ]
+  }
+
+  const lines = ['## 运行时状态', '']
+
+  if (runtime.status !== 'ok') {
+    lines.push(`这次没查到：${runtime.note ?? '运行时服务不可用。'}`)
+    if (runtime.toolCount !== null) lines.push('', `当前会话可见的工具：${runtime.toolCount} 个。`)
+    lines.push(
+      '',
+      '**这不等于“没问题”**：下面的结论都只基于磁盘文件，插件完全可能装了却没跑起来。',
+      '',
+    )
+    return lines
+  }
+
+  const phases = Object.entries(runtime.phases)
+    .map(([phase, count]) => `${phase} ${count}`)
+    .join('、')
+  lines.push(
+    `- 正在运行：${runtime.enabled} 个插件`,
+    `- 阶段分布：${phases.length > 0 ? phases : '（空）'}`,
+    `- 清单能对上：${runtime.matched} / ${runtime.declared}`,
+  )
+  if (runtime.toolCount !== null) lines.push(`- 当前会话可见的工具：${runtime.toolCount} 个`)
+  lines.push('')
+
+  if (runtime.failed.length > 0) {
+    lines.push(
+      '### ⛔ 启动了但失败',
+      '',
+      ...runtime.failed.map(name => `- \`${name}\``),
+      '',
+      '这些插件的 fiber 阶段是 failed，它们注册的工具不会出现在会话里。',
+      '失败原因 dsh 没有投影出来（运行时状态只有阶段、没有错误信息），只能看桌面端启动时的输出。',
+      '',
+    )
+  }
+
+  if (runtime.missingOwnTools.length > 0) {
+    lines.push(
+      '### 💡 本插件有工具不在当前会话里',
+      '',
+      ...runtime.missingOwnTools.map(name => `- \`${name}\``),
+      '',
+      '两种可能：被别的插件的同名工具占了（本插件会主动让位），或者被当前 agent 的工具范围隐藏了。',
+      '注册表不记录“工具是谁注册的”，所以没法进一步区分。',
+      '',
+    )
+  }
+
+  if (runtime.matched < runtime.declared) {
+    lines.push(
+      `磁盘清单里有 ${runtime.declared - runtime.matched} 个 bundle 在运行时快照里没对上。`,
+      'dsh 自带的插件（`@deepseek-ai/*`）模块名常与清单写法不同，这种情况不用管；',
+      '如果没有“启动了但失败”的项，通常说明它们只是换了名字或还没加载。',
+      '',
+    )
+  }
+
+  return lines
+}
+
 /** Markdown 报告（通俗风格）。 */
-export function renderPluginMarkdown(report: PluginReport): string {
+export function renderPluginMarkdown(report: PluginReport, runtime?: RuntimeSummary): string {
   const conflicts = sortConflicts(report.conflicts)
   const blocking = conflicts.filter(item => item.severity !== 'info')
   const info = conflicts.filter(item => item.severity === 'info')
@@ -74,15 +175,16 @@ export function renderPluginMarkdown(report: PluginReport): string {
   const lines: string[] = [
     `# 插件体检：${report.profileName} profile`,
     '',
-    `**结论：${verdict(report, conflicts)}**`,
+    `**结论：${verdict(report, conflicts, runtime)}**`,
     '',
-    ...summaryTable(report, conflicts),
+    ...summaryTable(report, conflicts, runtime),
     `## 装了哪些插件（${report.bundles.length} 个）`,
     '',
     '| 插件 | 版本 | 来源 | 状态 |',
     '|---|---|---|---|',
     ...report.bundles.map(bundleRow),
     '',
+    ...runtimeSection(runtime),
   ]
 
   if (blocking.length > 0) {
@@ -122,12 +224,16 @@ export function renderPluginMarkdown(report: PluginReport): string {
 }
 
 /** JSON 输出：字段稳定，给脚本用。 */
-export function renderPluginJson(report: PluginReport): string {
+export function renderPluginJson(report: PluginReport, runtime?: RuntimeSummary): string {
   return JSON.stringify({
     profile: report.profileName,
     profileDir: report.profileDir,
     bundles: report.bundles,
-    conflicts: report.conflicts,
+    conflicts: report.conflicts.map(conflict => ({
+      ...conflict,
+      prescription: prescriptionOf(conflict.rule),
+    })),
     notes: report.notes,
+    ...runtime === undefined ? {} : { runtime },
   }, null, 2)
 }

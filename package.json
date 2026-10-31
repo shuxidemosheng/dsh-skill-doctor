@@ -1,6 +1,6 @@
 {
   "name": "dsh-skill-doctor",
-  "description": "Lint, diagnose and A/B-test DeepSeek Harness skills, and check installed plugins for structural conflicts: frontmatter, description limits, body budget, resource references, shadowed names, and why a skill is not loading. 技能体检 + 插件冲突检查：静态 lint + 运行时诊断。",
+  "description": "Diagnose DeepSeek Harness skills and plugins: whether a skill loads and gets picked by the model, whether a plugin actually started or fights another one over a loader entry, and what to fix first. 技能与插件体检：能不能用、会不会被模型选中、插件跑起来没、处方分级。",
   "keywords": [
     "deepseek",
     "deepseek-harness",
@@ -21,7 +21,7 @@
     "type": "git",
     "url": "git+https://github.com/shuxidemosheng/dsh-skill-doctor.git"
   },
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

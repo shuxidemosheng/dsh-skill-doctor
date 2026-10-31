@@ -3,6 +3,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ResolvedConfig } from '../config.js'
 import { renderPluginJson, renderPluginMarkdown } from '../plugins/report.js'
+import { probeRuntime, summarizeRuntime } from '../plugins/runtime.js'
 import { scanProfile } from '../plugins/scan.js'
 
 /**
@@ -27,9 +28,9 @@ function profileNameOf(ctx: Context): string | undefined {
 export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnType<typeof defineTool> {
   return defineTool({
     name: 'plugin_doctor',
-    description: 'Check the installed DeepSeek Harness plugins in a profile for structural conflicts: the same loader entry inserted or patched by two plugins, a bundle listed twice, a dependency that is installed but not enabled, or an enabled bundle whose package is missing. '
+    description: 'Check the installed DeepSeek Harness plugins in a profile, on disk and at runtime: structural conflicts (the same loader entry inserted or patched by two plugins, a bundle listed twice, a dependency installed but not enabled, an enabled bundle whose package is missing) plus whether each bundle actually started (a bundle whose fiber phase is failed never provides its tools). '
       + 'Use it when a plugin\'s tool does not show up, when two plugins seem to fight over the same setting, or after installing several plugins. '
-      + 'It only reads profile files; it never changes or loads a plugin. It cannot see runtime tool-name collisions, because the tool registry does not expose which plugin registered a name. '
+      + 'It only reads profile files and runtime state; it never changes, enables or loads a plugin. Two things it cannot tell you: which plugin registered a given tool name (the registry has no owner field), and why a plugin failed (the inventory projects the fiber phase but not the error). '
       + 'The report is Markdown: show it to the user as Markdown, never inside a code block.',
     parameters: {
       profile: { type: 'string', description: 'Profile to inspect (defaults to the profile this session runs in).' },
@@ -39,10 +40,18 @@ export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnTy
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       const profile = args.profile ?? profileNameOf(ctx) ?? 'desktop'
-      const report = await scanProfile(profile)
-      return args.format === 'json' ? renderPluginJson(report) : renderPluginMarkdown(report)
+      // 两件事互不依赖：磁盘扫描是本地 IO，运行时探测可能要跨进程。
+      // 并行跑，且探测在任何失败情况下都只降级、不抛错。
+      const [report, snapshot] = await Promise.all([
+        scanProfile(profile),
+        probeRuntime(ctx, exec),
+      ])
+      const runtime = summarizeRuntime(snapshot, report.bundles)
+      return args.format === 'json'
+        ? renderPluginJson(report, runtime)
+        : renderPluginMarkdown(report, runtime)
     },
   })
 }

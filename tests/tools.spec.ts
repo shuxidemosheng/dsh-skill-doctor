@@ -106,6 +106,48 @@ describe('skill_doctor', () => {
     expect(screen).not.toMatch(/provider:/)
   })
 
+  it('shows the description exactly as the model sees it, not a summary', async () => {
+    // 模型读到的就是 slice(0, limit)；给摘要会让“我的触发词在不在里面”这个判断失去依据。
+    const description = `${'A'.repeat(300)}${'B'.repeat(300)}`
+    const skill: SkillInput = {
+      name: 'long-desc',
+      description,
+      content: 'Steps.',
+      provider: 'filesystem',
+      source: 'filesystem',
+      invocation: { modelInvocable: true, userInvocable: true },
+      path: `${FIXTURES}long-desc/SKILL.md`,
+    }
+    const env = createFakeCtx([{ skill }])
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', { name: 'long-desc' }))
+    const quote = output.split('\n').find(line => line.startsWith('> '))
+
+    expect(quote).toBe(`> ${description.slice(0, 500)}`)
+    // 仍是顶层引用块（列表项里嵌引用块在部分渲染器里会被拆散）。
+    expect(output.split('\n').some(line => line.startsWith('  > '))).toBe(false)
+  })
+
+  it('does not pretend to see byte-level problems inside a runtime session', async () => {
+    // 运行时的 skills.get 不返回文件原文，"BOM / CRLF"这两条只有 CLI 扫磁盘时才可能命中。
+    // 这条测试锁的是"不谎报"：不能因为看不见就当成没问题，也不能凭空报出 SD013。
+    const env = await envWith('good-skill')
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', { name: 'good-skill' }))
+
+    expect(output).not.toMatch(/SD013|SD014/)
+  })
+
+  it('labels a semantic problem as something only a human can fix', async () => {
+    // 改名会打断已有引用、简介要人写，这类问题不给一键修复的错觉。
+    const env = await envWith('bad-name')
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', { name: 'Bad_Name' }))
+
+    expect(output).toMatch(/处方：✍️ 只能人工改/)
+    expect(firstScreen(output)).not.toMatch(/SD002/)
+  })
+
   it('keeps the description quote at top level, not nested in a list item', async () => {
     // 回归：列表项里嵌引用块 + 缩进续行，在部分 Markdown 渲染器里会被拆散。
     const env = await envWith('good-skill')
@@ -126,7 +168,7 @@ describe('skill_doctor', () => {
     // 规则 ID 只在文末技术细节里出现，第一屏说人话。
     expect(firstScreen(output)).not.toMatch(/SD002/)
     expect(output).toMatch(/SD002/)
-    expect(output).toMatch(/怎么改：/)
+    expect(output).toMatch(/处方：/)
   })
 
   it('returns a grouped report when no name is given', async () => {

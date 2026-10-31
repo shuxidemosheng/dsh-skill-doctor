@@ -24,14 +24,14 @@ import { buildDoctorTool } from './tools/doctor.js'
 import { buildExplainTool } from './tools/explain.js'
 import { buildLintTool } from './tools/lint.js'
 import { buildPluginTool } from './tools/plugin.js'
+import { TOOL_NAMES } from './tool-names.js'
 
 export const name = 'skill-doctor'
 
 /** 宿主服务依赖：工具注册、技能注册表、会话工作目录。 */
 export const inject = ['tools', 'skills', 'workingDirectory'] as const
 
-/** 本插件注册的工具名（与 tools 数组顺序一致）。 */
-const TOOL_NAMES = ['skill_doctor', 'skill_lint', 'skill_explain', 'plugin_doctor'] as const
+/** 本插件注册的工具名（与 tools 数组顺序一致）；定义在 tool-names.ts，供运行时体检复用。 */
 
 /**
  * 注册技能体检工具。
