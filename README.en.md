@@ -2,222 +2,316 @@
 
 # dsh-skill-doctor
 
-**A health check for DeepSeek Harness skills: does it load, why is it ignored, and are its description, budget and resource references sane?**
+English | [中文](README.md)
+
+**Health checks for DeepSeek Harness skills and plugins: what the model actually sees, whether a plugin really started, and what to fix next.**
 
 [![npm version](https://img.shields.io/npm/v/dsh-skill-doctor)](https://www.npmjs.com/package/dsh-skill-doctor)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](package.json)
+[![dsh](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-4176E6.svg)](https://github.com/deepseek-ai/deepseek-harness)
+
+[Highlights](#highlights) | [Install](#install) | [Usage](#usage) | [Panel](#panel) | [Tools](#tools) | [Rules](#rules) | [CLI](#cli) | [Limits](#limits) | [Troubleshooting](#troubleshooting)
 
 </div>
 
-Skill failures are usually silent: a skill does not load, is shadowed by a duplicate, has its description truncated, or references a file that is not there. The user only sees “the model does not use it”. This plugin turns those hidden failures into a readable report.
+Broken skills fail **silently**: not loaded, shadowed by a same-named copy, description truncated, referenced files missing — all you notice is "the model never uses it".
 
-It is not a marketplace and not a security scanner. It answers one question: **can this skill actually work in dsh?**
+`dsh-skill-doctor` turns those invisible problems into a readable report. It is not a marketplace and not a security scanner; it answers one question: **does this thing actually work inside dsh?**
+
+## Highlights
+
+- **Shows what the model actually sees.** Not "description too long", but the truncated text **verbatim** — you can tell at a glance whether your trigger words made the cut.
+- **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated.
+- **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
+- **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
+- **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
 
 ## Install
 
 ```bash
-dsh plugin --profile <profile> add dsh-skill-doctor@0.4.0
+dsh plugin --profile <your-profile> add dsh-skill-doctor@0.6.0
 ```
 
-Then ask in chat:
+Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 
-> Lint the skills in this project.
+After that just talk to it — no need to memorize tool names:
 
-The model calls `skill_doctor` and returns a grouped report. To diagnose one skill:
+> run a health check on my skills
 
-> Why is the `nature-citation` skill not showing up?
+## Usage
 
-The model calls `skill_doctor({ name })`. The first screen is plain language, no dsh internals:
+Three real situations, one sentence each.
 
-```text
-# Skill check: `nature-citation`
+**"I suspect a skill never takes effect"**
 
-**Verdict: usable, but the model only sees the first 500 characters of the description —
-and the cut part is exactly how you usually ask for this skill.**
+> why might nature-citation not be picked up by the model?
 
-## What the model sees
-- Description (the only thing it uses to decide whether to pick this skill):
-  > Add strict Nature/CNS citations to manuscript text by splitting long passages into …
-  956 characters total; the model sees the first 500, the remaining 456 are invisible.
-- Can the model pick it on its own: yes
-- Can you call it with `/nature-citation`: yes
+You get the exact 500 characters the model reads, the trigger phrases that got cut, how much it matters, and how to fix it.
 
-## What got cut off (invisible to the model)
-- "分段引用", "自动给出引用", "Nature系列引用"
+**"I suspect a plugin is not running"**
 
-**Impact: high.** If these are the words you actually type, the model will not pick this skill.
+> check the desktop profile plugins for conflicts
 
-### How to fix
-Move these phrases into the first 500 characters, e.g. start the description with:
-> Use this skill when the user says "分段引用" or "自动给出引用".
-```
+Disk level: entry collisions, duplicate bundles, installed-but-disabled. Runtime level: fiber phase, with `failed` bundles named.
 
-Provider, `model-invocable` and rule IDs (SD004 …) stay in a final **"Technical details (skippable)"** section. Use `format: 'json'` or `skill_lint` when you want the raw per-rule report.
+**"What is the model doing right now?"**
 
-## Panel: what the model is calling right now (new in 0.6.0)
+Look at the bar above the composer, or open it for the full call stream.
 
-A compact bar sits above the conversation input. Click it to see the tool calls of the current session:
+## Panel
+
+A compact bar sits above the conversation input:
 
 ```
 🩺 skill-doctor · reading skill nature-citation      3 skills · 1 plugin · 12 tools
 ```
 
-**What it shows**
+```
+🩺 skill-doctor · activity              3 skills · 1 plugin · 12 tools   ✕
+─────────────────────────────────────────────────────────────────
+→ reading skill nature-citation
+✓ skill_doctor · 29 skills                              this plugin
+✓ read · HANDOFF.md
+● grep · TODO                                           running
+─────────────────────────────────────────────────────────────────
+Last 20 entries only. dsh does not expose which plugin owns a tool,
+so only tool names are shown.
+```
 
-- **Skill loads** — the model loads a skill through the `skill` tool, whose arguments carry the name, so "reading skill X" is exact.
-- **Tool call stream** — the tool name plus the most telling argument (command, path, pattern…), one line each.
-- **Own tools highlighted** — calls to `skill_doctor` / `plugin_doctor` are marked.
-- **Session totals** — how many skills, plugin tool calls and other tools.
+- **→** skill load; the `skill` tool carries the name, so this is exact
+- **green + "this plugin"** calls to the doctor's own tools
+- **●** no result yet, **✓** done
+- Right side: session totals for skills / plugin calls / other tools
 
-**What it cannot show** (dsh limitation, not an omission)
-
-- **Which plugin a tool belongs to** — session events carry `tool/call { name, arguments }` with no provenance.
-- **Calls that scrolled out** — the panel reads the current session window; older calls are gone and the footer says so.
-- **Tool results** — only running/done state, so the panel does not become a second transcript.
-
-It deliberately does **not** register a `sessionProjections` entry (that needs a zod schema, and comparable plugins ship zod inside their bundle); it reads the `useChat` snapshot instead. Net effect: zero host-side changes, 16.7 kB client bundle.
-
-> The panel only loads after a **full restart** of the desktop app.
-
-## Rules
-
-| ID | Level | Check |
-|---|---|---|
-| SD001 | error | missing or unparseable frontmatter |
-| SD002 | error | name is not kebab-case, or mismatches the directory |
-| SD003 | error | missing/empty description |
-| SD004 | warn | description exceeds the catalog limit (default 500) |
-| SD005 | warn | description is too short/vague |
-| SD006 | error | body is empty or headings only |
-| SD007 | warn | body exceeds the token budget (default 8000) |
-| SD008 | warn | `references/`, `scripts/` or `assets/` target is missing |
-| SD009 | warn | same name in multiple roots/providers (may be shadowed) |
-| SD010 | warn | invocation field is not boolean (including legacy camelCase) |
-| SD011 | info | name longer than 64 characters |
-| SD012 | warn | heuristic suspicious instructions (ignore-previous, credential URLs, hidden Unicode, long base64) |
-| SD013 | info | UTF-8 BOM |
-| SD014 | info | CRLF line endings |
-| SD015 | warn | resource reference contains path traversal |
-
-Rules can be disabled or re-leveled through config. SD012 is heuristic: a hit is not proof of malice.
+The panel reads the current session window, so **calls that scrolled out are gone**; entries it has seen are kept, so totals never go backwards. The footer says so.
 
 ## Tools
 
-### `skill_lint`
+| Tool | What it does | When |
+|---|---|---|
+| `skill_doctor` | Skill health check, verdict first | Start here |
+| `skill_lint` | Per-rule, technical | CI, rule-level triage |
+| `skill_explain` | Why one skill does not work | You already know which one |
+| `plugin_doctor` | Installed correctly + actually running | A tool disappeared |
 
-Lints every skill visible to the session, or one by name. This is the per-rule / CI mode: rule IDs are printed inline. For the plain-language version use `skill_doctor`.
+### `skill_doctor`
 
 ```json
-{ "name": "code-review", "format": "json" }
+{ "name": "nature-citation" }
 ```
 
-Parameters: `name?`, `provider?`, `rules?`, `severity?`, `extraRoots?`, `format?` (`markdown` | `json`).
+Omit `name` for a full check; `extraRoots` points at directories dsh does not index (for example `~/.claude/skills`).
+
+Output order is fixed: **verdict → evidence → prescription**.
+
+- **Verdict** — one sentence on whether it works
+- **Summary table** — skill, description length, truncation impact, suggested action
+- **What the model sees** — the description **verbatim**, cut at the limit, no second-hand summary
+- **What got cut** — the cut position, the trigger phrases lost, and whether it matters
+- **Problems** — each with "what is happening" + a prescription, no rule IDs
+- **Technical details (skippable)** — provider, model-invocable, rule IDs
+
+### `skill_lint`
+
+Per-rule verbose mode with rule IDs inline, grouped into "must fix / truncated / other / fine".
+
+| Parameter | Meaning |
+|---|---|
+| `name?` | One skill; omit for all |
+| `provider?` | Filter by provider |
+| `rules?` | Run only these rules, e.g. `["SD003","SD004"]` |
+| `severity?` | `info` / `warn` / `error`, defaults to config |
+| `extraRoots?` | Extra roots, used for shadowing detection |
+| `format?` | `markdown` (default) or `json` |
 
 ### `skill_explain`
 
-Explains the winning provider/source/path, invocation policy, description length, body token estimate, whether `ctx.skills.get` can load it, and likely reasons it is missing or ignored.
+Explains why a skill is missing, never selected, or failing to load: winning provider/path, model-invocable, description length, whether `ctx.skills.get` really resolves, same-name candidates.
 
-```json
-{ "name": "code-review" }
-```
-
-## CLI
-
-The package ships `dsh-skill-lint`, which does not need the dsh runtime:
-
-```bash
-npx --package dsh-skill-doctor dsh-skill-lint .
-npx --package dsh-skill-doctor dsh-skill-lint ./skills/code-review
-npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
-npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
-```
-
-### Safe auto-fixes (new in 0.4.0)
-
-Only fixes where there is exactly one possible result. Dry run by default:
-
-```bash
-dsh-skill-lint ~/.claude/skills --fix              # plan only, writes nothing
-dsh-skill-lint ~/.claude/skills --fix --apply      # write, with backups
-dsh-skill-lint . --fix --only SD013                # restrict to one rule
-```
-
-Two rules are fixable: **SD013 BOM** (drop the leading three bytes) and **SD014 CRLF** (`\r\n` to `\n`). Each write is preceded by a `<file>.bak` backup and followed by a re-lint with the same config; if the re-lint finds a new error, the file is restored from the backup and the failure is reported.
-
-**Deliberately not fixed**: rewriting a description, choosing between shadowed skills, deciding whether a suspicious instruction is malicious. There is no single right answer, and guessing is worse than leaving it alone. The report lists every rule that fired but was skipped.
-
-`SD010` is excluded on purpose: it only fires for values whose intent cannot be guessed (`"maybe"`, `2`), and turning the legacy `modelInvocable` into `disable-model-invocation` requires **inverting** it — that is a semantic rewrite, not a rename.
-
-Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usage/read error.
-
-### `plugin_doctor` (new in 0.3.0, runtime checks in 0.5.0)
-
-Answers two questions: **is it wired up correctly** (disk) and **did it actually start** (runtime).
+### `plugin_doctor`
 
 ```json
 { "profile": "desktop" }
 ```
 
-On disk it reads `profiles/<name>/package.json` plus each plugin's `cordis.patch.yml`: a bundle listed twice (PL001), two plugins inserting the same loader entry (PL002), two plugins patching the same row such as `agent-default-model` (PL003), a bundle whose package is missing or a dependency installed but not enabled (PL004).
+**On disk** it reads the profile `package.json` and each plugin's `cordis.patch.yml`:
 
-At runtime it soft-probes `pluginInventory` for each bundle's fiber phase and calls `ctx.tools.schemas(exec.agent)` for the tools actually visible in this session:
+| ID | Level | Check |
+|---|---|---|
+| PL001 | warn | The same bundle listed twice |
+| PL002 | warn | Two plugins inserting the same loader entry (only one wins) |
+| PL003 | warn | Two plugins patching the same row (later one silently wins) |
+| PL004 | error/info | Enabled but package missing / installed but not enabled |
+
+**At runtime** it soft-probes `pluginInventory` for each bundle's fiber phase and calls `ctx.tools.schemas(exec.agent)` for the tools actually visible in this session:
 
 | Evidence | Strength | What the report says |
 |---|---|---|
-| enabled but `fiberPhase` is `failed` | certain | names the plugin; its tools will never appear |
-| service missing or timed out | — | says the check did not run, and that this is **not** the same as "no problems" |
-| one of our own tools missing from the list | medium | lists both possibilities: taken by a same-named tool, or hidden by the agent scope |
+| enabled but `fiberPhase` is `failed` | certain | names it; its tools will never appear |
+| service missing / timed out | — | says the check did not run and that this is **not** "no problems" |
+| one of this plugin's own tools is missing | medium | lists both possibilities: same-name conflict, or hidden by the agent scope |
 
-`pluginInventory` is only mounted in the desktop profile (the headless template omits it), so headless reports always degrade to "not checked".
+`pluginInventory` is mounted in the **desktop profile only**, so headless always degrades to "not checked".
 
-**Not covered:**
+## Rules
 
-- **Which plugin registered a tool name** — the registry has no owner field. `schemas()` gives every name but no provenance, so a collision can only ever be reported as suspected, never pinned on a plugin.
-- **Why a plugin failed** — the inventory projects the fiber phase but not the error, and dsh writes no startup log to disk.
-- `@deepseek-ai/*` bundles ship inside `app.asar`, so entry conflicts are compared between profile plugins only.
+15 skill rules, each individually switchable:
+
+| ID | Level | Check |
+|---|---|---|
+| SD001 | error | frontmatter missing or unparsable |
+| SD002 | error | skill name not kebab-case, or differs from the directory name |
+| SD003 | error | description missing |
+| SD004 | warn | description over the catalogue limit (default 500) |
+| SD005 | warn | description too short or too generic |
+| SD006 | error | body empty, or only headings |
+| SD007 | warn | body token estimate over budget (default 8000) |
+| SD008 | warn | `references/`, `scripts/`, `assets/` paths that do not exist |
+| SD009 | warn | same name from multiple roots/providers, may be shadowed |
+| SD010 | warn | invocation field is not a boolean (incl. legacy camelCase) |
+| SD011 | info | skill name too long (>64) |
+| SD012 | warn | suspicious-instruction heuristics: ignore prior instructions, leak credentials, hidden Unicode, long base64 |
+| SD013 | info | file starts with a UTF-8 BOM |
+| SD014 | info | file uses CRLF |
+| SD015 | warn | resource reference contains path traversal |
+
+> SD012 is heuristic: a hit is not a malware verdict. It does not replace a security review.
+
+## CLI
+
+`dsh-skill-lint` ships with the plugin and needs **no dsh runtime**:
+
+```bash
+# current project / one skill / an external directory
+npx --package dsh-skill-doctor dsh-skill-lint .
+npx --package dsh-skill-doctor dsh-skill-lint ./skills/code-review
+npx --package dsh-skill-doctor dsh-skill-lint ~/.claude/skills
+
+# CI: JSON, and warnings fail the build
+npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
+
+# plugin check (reads the profile directory directly)
+npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
+```
+
+### Auto-fix
+
+Only problems with exactly one possible result; dry run by default:
+
+```bash
+npx --package dsh-skill-doctor dsh-skill-lint ~/.claude/skills --fix          # plan only
+npx --package dsh-skill-doctor dsh-skill-lint ~/.claude/skills --fix --apply  # write
+npx --package dsh-skill-doctor dsh-skill-lint . --fix --only SD013            # one rule
+```
+
+Two rules are fixable: **SD013 BOM** and **SD014 CRLF**.
+
+Each write is preceded by a `<file>.bak` backup and followed by a re-lint with the same config; if the re-lint finds a new error, the file is restored and the failure reported. `--apply` on its own is rejected.
+
+**Deliberately not fixed**: rewriting a description, choosing between shadowed skills, deciding whether a suspicious instruction is malicious. There is no single right answer. The report lists every rule that fired but was skipped.
+
+Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usage/read error.
+
+```yaml
+- uses: actions/setup-node@v4
+  with:
+    node-version: 24
+- run: npx --package dsh-skill-doctor dsh-skill-lint ./skills --warn-as-error
+```
 
 ## Config
 
+```yaml
+- insert:
+    - id: skill-doctor
+      name: dsh-skill-doctor
+      config:
+        maxDescriptionLength: 500
+        maxBodyTokens: 8000
+        extraRoots:
+          - ~/.claude/skills
+        rules:
+          SD012: info        # informational only
+          SD014: 'off'       # drop the CRLF hint
+```
+
 | Field | Default | Meaning |
 |---|---|---|
-| `maxDescriptionLength` | `500` | description limit used by the model catalog |
-| `maxBodyTokens` | `8000` | body token budget |
-| `maxFileBytes` | `1048576` | per-file read cap |
-| `extraRoots` | `[]` | extra skill roots to scan (external directories are not read by default) |
-| `rules` | `{}` | per-rule `off` / `info` / `warn` / `error` |
-| `severityThreshold` | `info` | output filter |
-| `includeProviders` / `excludeProviders` | `[]` | provider filters |
+| `maxDescriptionLength` | `500` | Matches the catalogue limit |
+| `maxBodyTokens` | `8000` | Body token budget |
+| `maxFileBytes` | `1048576` | Per-file read limit |
+| `extraRoots` | `[]` | Extra skill roots; external dirs are never read by default |
+| `rules` | `{}` | Per-rule severity: `off` / `info` / `warn` / `error` |
+| `severityThreshold` | `info` | Output filter |
+| `includeProviders` | `[]` | Only these providers |
+| `excludeProviders` | `[]` | Skip these providers |
 
-An invalid config logs one warning and disables the plugin; it never blocks session creation.
+Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
+
+## Limits
+
+Capability boundaries, not omissions:
+
+- **Which plugin owns a tool** — the registry has no owner field. `schemas()` gives every name but no provenance, so a collision can only be reported as suspected.
+- **Why a plugin failed** — the runtime snapshot projects the fiber phase, not the error, and dsh writes no startup log to disk.
+- **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `extraRoots` at the directory to scan files directly.
+- **Whether a skill is well written** — not judged. Auto-fix covers two byte-level rules only.
+- **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
+- **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
+- **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
+
+## Troubleshooting
+
+**No tools show up at all**
+
+Confirm the plugin is actually in the profile:
+
+```bash
+dsh plugin --profile <your-profile> list
+```
+
+If it is listed, suspect a tool-name conflict — when one of the four names is already registered, this plugin steps aside (the log has `already registered — skipping it`).
+
+**Tools work but the panel is missing**
+
+1. Make sure dsh was **fully quit and reopened**, not just the window closed
+2. Open devtools; a `dsh-skill-doctor` error there explains why
+3. Bar present but always "no tool calls" → the session props are not injected, which is different from the bundle not loading
+
+**The report shows 0 or too few skills**
+
+`skill_doctor` only sees the current dsh view. To scan directories dsh does not index (`~/.claude/skills`), pass `extraRoots` explicitly.
+
+**"runtime state not checked" in the plugin report**
+
+That is a degradation, not a failure: `pluginInventory` is mounted on the desktop profile only.
+
+**All tools vanished after editing config**
+
+Invalid config disables the plugin on purpose, so a bad config cannot block the session. Check the field names and types in `cordis.patch.yml`.
 
 ## How it works
 
-1. `ctx.skills.snapshot({ cwd, scope })` gives the winning skills for this view.
-2. `ctx.skills.get(name)` loads the full body and confirms it can actually be loaded.
-3. When `path` points to a local file, the raw `SKILL.md` is read once (read-only) for frontmatter, references and encoding checks.
-4. Remote/virtual skills skip file-level rules and use only the parsed definition.
-5. `extraRoots` only adds candidate roots for duplicate reporting; the registry remains authoritative.
+1. `ctx.skills.snapshot({ cwd, scope })` for the winning skills in the current view
+2. `ctx.skills.get(name)` for the full body, proving it really resolves
+3. When `path` is local, the raw `SKILL.md` is read once (read-only) for frontmatter/reference/encoding checks
+4. Remote and virtual skills have no local path, so file-level rules are skipped
+5. `extraRoots` only feeds "same-name candidate" hints; the registry result stays authoritative
 
-It never executes a skill's scripts, never modifies a file, and never sends skill content over the network.
-
-## Limitations
-
-- SD012 is heuristic, not a malware verdict.
-- Token estimates are approximate (ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char).
-- Duplicate detection scans configured roots only; it cannot see every internal registry candidate.
-- It does not judge whether a skill is well written. Auto-fix covers two byte-level rules only (BOM, CRLF); anything semantic is left alone.
-- Runtime checks need the **desktop profile** (`pluginInventory` is mounted there). In headless the report says the check did not run — do not read that as "all good".
-- The reason a plugin failed is not available: the runtime snapshot carries the fiber phase only, no error, and dsh keeps no startup log on disk.
-- Remote/virtual skills have no file-level checks.
+It **never executes** a skill's scripts, **never modifies** a file (except the CLI `--fix`), and **never sends** skill content over the network.
 
 ## Development
 
 ```bash
 npm install
-npm run build
-npm test
+npm run build     # tsc + esbuild (host / cli / client)
+npm test          # 95 tests
 npm run smoke
+npm run e2e       # real dsh headless, group A
 ```
+
+After changing the panel, run `npm run build` and restart dsh. `tests/client-bundle.spec.ts` checks the bundle shell, exports and slot registration; the visuals still need human eyes.
 
 ## License
 
