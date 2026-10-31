@@ -10,9 +10,10 @@ import { scanProfile } from './plugins/scan.js'
 import { applyFixes, type FixOutcome, type Verify } from './fixer/apply.js'
 import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
 import { renderFixJson, renderFixMarkdown, type UnfixableHit } from './fixer/report.js'
+import { readDshVersion } from './version-check.js'
 import type { ScanResult, Severity } from './types.js'
 
-const VERSION = '0.6.0'
+const VERSION = '0.7.0'
 
 interface CliOptions {
   readonly paths: string[]
@@ -287,7 +288,10 @@ async function main(): Promise<void> {
     return
   }
 
-  const reportOptions = { maxDescriptionLength: config.maxDescriptionLength }
+  const reportOptions = {
+    maxDescriptionLength: config.maxDescriptionLength,
+    dshVersion: await readDshVersion(),
+  }
   process.stdout.write(`${options.json
     ? renderLintJson(result, reportOptions)
     : renderLintMarkdown(result, reportOptions)}\n`)

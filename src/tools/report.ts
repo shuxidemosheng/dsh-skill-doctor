@@ -9,9 +9,11 @@
  * JSON 输出始终是技术形态（`renderLintJson`），机器读它，不做人话改写。
  */
 import { dirname } from 'node:path'
+import { clusterFindings, clusterHint, type RuleCluster } from '../clusters.js'
 import { RULES } from '../scanner/rules.js'
 import type { Finding, ScanResult, Severity, SkillLintResult } from '../types.js'
-import { prescriptionOf, prescriptionLine } from './prescriptions.js'
+import { calibrationNote, calibrationWarning, type DshVersionInfo } from '../version-check.js'
+import { prescribeKind, prescriptionOf, prescriptionLine } from './prescriptions.js'
 
 const SEVERITY_LABEL: Record<Severity, string> = { error: 'ERROR', warn: 'WARN', info: 'INFO' }
 
@@ -24,6 +26,8 @@ export interface ReportOptions {
   readonly maxDescriptionLength?: number
   /** 报告风格；默认 `plain`（给人看），`technical` 给 CI 用。 */
   readonly style?: 'plain' | 'technical'
+  /** dsh 版本对照；没传就不显示校准信息（CLI 之外调用方可能拿不到）。 */
+  readonly dshVersion?: DshVersionInfo
 }
 
 function limitOf(options: ReportOptions): number {
@@ -213,7 +217,7 @@ function ruleSummary(findings: readonly Finding[]): string {
 }
 
 /** 单技能的“技术细节”附录：字段名带英文，方便对照文档和原始文件。 */
-function technicalFooter(result: SkillLintResult, limit: number): string[] {
+function technicalFooter(result: SkillLintResult, limit: number, dsh?: DshVersionInfo): string[] {
   const description = result.skill.description
   const lines = [
     '---',
@@ -228,6 +232,9 @@ function technicalFooter(result: SkillLintResult, limit: number): string[] {
     `- 能不能用 \`/${result.skill.name}\` 手动调用（user-invocable）：${result.skill.invocation.userInvocable ? '能' : '不能'}`,
     `- 简介长度（description）：${description.length} 字 / 上限 ${limit}`,
   ]
+  // 这把尺子是按哪个 dsh 版本校准的；版本漂了，“超长”就未必还是问题。
+  const note = calibrationNote(dsh)
+  if (note !== undefined) lines.push(`- ${note}`)
   if (result.findings.length > 0) {
     lines.push(`- 命中规则：${ruleSummary(result.findings)}`)
   } else {
@@ -339,7 +346,7 @@ export function renderDoctorMarkdown(result: SkillLintResult, options: ReportOpt
   }
 
   while (lines.at(-1) === '') lines.pop()
-  lines.push('', ...technicalFooter(result, limit))
+  lines.push('', ...technicalFooter(result, limit, options.dshVersion))
   return lines.join('\n')
 }
 
@@ -370,7 +377,7 @@ function compactSkillLine(result: SkillLintResult, limit: number): string {
 }
 
 /** 多技能报告（技术风格）：逐条规则、规则 ID 前置，供 CI 与规则排查使用。 */
-function renderTechnicalMarkdown(result: ScanResult, limit: number): string {
+function renderTechnicalMarkdown(result: ScanResult, limit: number, options: ReportOptions): string {
   const blocking = result.results.filter(item => item.errors > 0)
   const truncated = result.results.filter(item =>
     item.errors === 0 && item.findings.some(finding => finding.rule === 'SD004'))
@@ -388,6 +395,9 @@ function renderTechnicalMarkdown(result: ScanResult, limit: number): string {
       + `**${other.length} 其他提示** / **${ok.length} 正常**。`,
     '',
   ]
+
+  const note = calibrationNote(options.dshVersion)
+  if (note !== undefined) lines.push(`> ${note}`, '')
 
   if (result.results.length === 0) {
     lines.push('没有找到技能。确认 cwd、`extraRoots` 或技能根目录。')
@@ -446,6 +456,54 @@ function renderTechnicalMarkdown(result: ScanResult, limit: number): string {
 }
 
 /**
+ * 一组共性问题的建议动作。
+ *
+ * 只有 SD004 有明确的量化动作（压到前 N 字）；其余规则给的是流程性建议，
+ * 因为不同技能的具体修法不一样，不该由报告替用户编一句。
+ */
+function clusterAction(cluster: RuleCluster, limit: number): string {
+  // 能自动修的（BOM / CRLF）不该让人逐个点开：一条命令扫一遍就完了。
+  if (prescribeKind(cluster.rule) === 'autofix') {
+    return `这类能自动修：在技能目录的上一层跑 \`dsh-skill-lint . --fix --only ${cluster.rule} --apply\`，`
+      + `一次改完 ${cluster.count} 个（会先备份成 .bak，复验失败会自动回滚）。`
+  }
+  if (cluster.rule === 'SD004') {
+    return cluster.commonPrefix === undefined
+      ? `把简介压到前 ${limit} 字以内，${cluster.count} 个技能得逐个改。`
+      : `把 \`${cluster.commonPrefix}-\` 这套模板里的简介改短（前 ${limit} 字说完“什么时候用”），改一次顶 ${cluster.count} 次。`
+  }
+  return cluster.commonPrefix === undefined
+    ? `${cluster.count} 个技能各自看一遍；改完重跑体检，确认这个数字下降。`
+    : `先改 \`${cluster.commonPrefix}-\` 这套模板或生成脚本，再重跑体检确认数量下降；落下的再单独补。`
+}
+
+/**
+ * 共性问题章节。
+ *
+ * 29 个技能里 13 个都“简介超长”，逐条列就是 13 行噪音，而真实根因常常只有一个：
+ * 它们出自同一套模板。这里按规则把命中聚成组，并给出“是否同源”的推测。
+ * 注意措辞是“大概率/多半”——共同前缀只能说明命名相似，不能证明同一模板。
+ */
+function clusterSection(clusters: readonly RuleCluster[], limit: number): string[] {
+  if (clusters.length === 0) return []
+  const lines: string[] = [
+    `## 共性问题（${clusters.length} 组，先改这里最划算）`,
+    '',
+    '同一条规则命中很多技能，通常只有一个根因。按根因看，比按技能逐个看省事：',
+    '',
+  ]
+  for (const cluster of clusters) {
+    const percent = Math.round(cluster.share * 100)
+    lines.push(`- **${cluster.plainTitle}**（${cluster.rule}）—— ${cluster.count} 个技能，占 ${percent}%`)
+    lines.push(`  - 命中：${cluster.skills.map(name => `\`${name}\``).join('、')}`)
+    lines.push(`  - 根因推测：${clusterHint(cluster)}`)
+    lines.push(`  - 怎么改：${clusterAction(cluster, limit)}`)
+  }
+  lines.push('')
+  return lines
+}
+
+/**
  * 多技能报告（通俗风格）。
  *
  * 30 个技能不能变成 30 段规则文本，所以这里只做三件事：
@@ -453,7 +511,7 @@ function renderTechnicalMarkdown(result: ScanResult, limit: number): string {
  * 2. 只展开真正需要动手的技能，每条都带“现在/怎么改”；
  * 3. 其余技能压成一行，规则 ID 统一放文末。
  */
-function renderPlainMarkdown(result: ScanResult, limit: number): string {
+function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportOptions): string {
   const total = result.results.length
   if (total === 0) {
     return [
@@ -479,6 +537,11 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
   const lines: string[] = [
     '# Skill Doctor：技能体检报告',
     '',
+  ]
+  // 版本漂移提示放最上面：它会影响下面每一条“超长”判断的可信度。
+  const warning = calibrationWarning(options.dshVersion)
+  if (warning !== undefined) lines.push(`> ⚠️ ${warning}`, '')
+  lines.push(
     `一共检查了 ${total} 个技能`
       + (bundled > 0
         ? `（其中 ${bundled} 个是 dsh 自带的虚拟技能，不在你的技能目录里，改不了也不用管）：`
@@ -490,7 +553,11 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
     `- 💡 其他小问题：${other.length}`,
     `- ✅ 没问题：${ok.length}`,
     '',
-  ]
+  )
+
+  // 共性问题放在逐个展开之前：先让人知道“13 个超长其实是一个模板问题”，
+  // 再看下面的细节，才知道该改模板还是改单个文件。
+  lines.push(...clusterSection(clusterFindings(result.results), limit))
 
   if (blocking.length > 0) {
     lines.push('## 先修这些：有错误，可能根本用不了', '')
@@ -549,6 +616,8 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
   // 只列“有命中”的技能，避免 30 行“无”把附录撑成第二份正文。
   const hit = result.results.filter(item => item.findings.length > 0)
   lines.push('---', '', '## 技术细节（可跳过）', '')
+  const note = calibrationNote(options.dshVersion)
+  if (note !== undefined) lines.push(`- ${note}`, '')
   if (hit.length === 0) {
     lines.push('所有技能都没有命中任何规则。')
   } else {
@@ -566,8 +635,8 @@ function renderPlainMarkdown(result: ScanResult, limit: number): string {
 export function renderLintMarkdown(result: ScanResult, options: ReportOptions = {}): string {
   const limit = limitOf(options)
   return options.style === 'technical'
-    ? renderTechnicalMarkdown(result, limit)
-    : renderPlainMarkdown(result, limit)
+    ? renderTechnicalMarkdown(result, limit, options)
+    : renderPlainMarkdown(result, limit, options)
 }
 
 /** 扫描结果的稳定 JSON。 */
@@ -581,6 +650,17 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
       warnings: result.warnings,
       infos: result.infos,
     },
+    // 机器侧也要拿到聚类：CI 想“这次修了 13 个还是 1 个根因”，只能靠这个字段。
+    clusters: clusterFindings(result.results).map(cluster => ({
+      rule: cluster.rule,
+      plainTitle: cluster.plainTitle,
+      count: cluster.count,
+      share: Number(cluster.share.toFixed(3)),
+      skills: [...cluster.skills],
+      commonPrefix: cluster.commonPrefix ?? null,
+      hint: clusterHint(cluster),
+    })),
+    ...options.dshVersion === undefined ? {} : { calibration: options.dshVersion },
     results: result.results.map(skill => ({
       name: skill.skill.name,
       provider: skill.skill.provider,

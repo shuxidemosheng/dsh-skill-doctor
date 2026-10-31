@@ -25,6 +25,8 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated.
 - **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
 - **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
+- **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
+- **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
 - **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
 
 ## Install
@@ -33,7 +35,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending `@0.6.0` if you prefer.
+That installs the latest version; pin it by appending `@0.7.0` if you prefer.
 
 Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 

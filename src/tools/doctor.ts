@@ -7,6 +7,7 @@ import { collectRuntimeSkills } from '../runtime.js'
 import { scanRoots } from '../scanner/fs-scan.js'
 import { duplicateFindingsBySkill } from '../scanner/checks/duplicates.js'
 import { filterSkills, lintSkill, lintSkills } from '../scanner/scan.js'
+import { readDshVersion } from '../version-check.js'
 import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown } from './report.js'
 
 /**
@@ -18,6 +19,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
   return defineTool({
     name: 'skill_doctor',
     description: 'Diagnose DeepSeek Harness skills in one screen. With a skill name, returns a verdict (usable / model-invisible / description truncated / broken), the exact catalog entry the model sees, ranked reasons, and copyable fixes. Without a name, returns a grouped report: which skills need fixing, which descriptions get truncated, which have other warnings, and which are healthy. '
+      + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
       + 'Use this first when a skill does not appear, does not respond, or seems ignored. It only reads files and never changes or executes a skill. '
       + 'The report is Markdown: show it to the user as Markdown (headings, table, emphasis) — never paste it inside a code block or quote it as raw text.',
     parameters: {
@@ -79,6 +81,11 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         // 用户按提示加了这个参数却看不到“可能被覆盖”，就会误以为没问题。
         const duplicates = duplicateFindingsBySkill(filterSkills(skills, config))
         const result = await lintSkill(skill, config, duplicates.get(skill) ?? [])
+        const reportOptions = {
+          maxDescriptionLength: config.maxDescriptionLength,
+          // 读磁盘上的 runtime.json，失败也只是“没有这一项”，不影响体检。
+          dshVersion: await readDshVersion(),
+        }
         if (args.format === 'json') {
           return renderLintJson({
             results: [result],
@@ -86,13 +93,16 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
             warnings: result.warnings,
             infos: result.infos,
             ok: result.ok,
-          }, { maxDescriptionLength: config.maxDescriptionLength })
+          }, reportOptions)
         }
-        return renderDoctorMarkdown(result, { maxDescriptionLength: config.maxDescriptionLength })
+        return renderDoctorMarkdown(result, reportOptions)
       }
 
       const result = await lintSkills(skills, config)
-      const reportOptions = { maxDescriptionLength: config.maxDescriptionLength }
+      const reportOptions = {
+        maxDescriptionLength: config.maxDescriptionLength,
+        dshVersion: await readDshVersion(),
+      }
       return args.format === 'json'
         ? renderLintJson(result, reportOptions)
         : renderLintMarkdown(result, reportOptions)

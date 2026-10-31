@@ -7,6 +7,7 @@ import { withRuleFilter } from '../config.js'
 import { scanRoots } from '../scanner/fs-scan.js'
 import { lintSkills } from '../scanner/scan.js'
 import { collectRuntimeSkills } from '../runtime.js'
+import { readDshVersion } from '../version-check.js'
 import { renderLintJson, renderLintMarkdown } from './report.js'
 
 /**
@@ -72,7 +73,11 @@ export function buildLintTool(ctx: Context, config: ResolvedConfig): ReturnType<
 
       const result = await lintSkills(filtered, withRuleFilter(config, args.rules, args.severity))
       // skill_lint 是逐条规则的 verbose / CI 模式：规则 ID 直接前置，方便对照配置和基线。
-      const reportOptions = { maxDescriptionLength: config.maxDescriptionLength, style: 'technical' as const }
+      const reportOptions = {
+        maxDescriptionLength: config.maxDescriptionLength,
+        style: 'technical' as const,
+        dshVersion: await readDshVersion(),
+      }
       return args.format === 'json'
         ? renderLintJson(result, reportOptions)
         : renderLintMarkdown(result, reportOptions)
