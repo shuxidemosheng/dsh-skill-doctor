@@ -20,7 +20,7 @@
 ## 快速开始
 
 ```bash
-dsh plugin --profile <你的profile> add dsh-skill-doctor@0.3.0
+dsh plugin --profile <你的profile> add dsh-skill-doctor@0.4.0
 ```
 
 装完重启（或等 HMR）。然后直接在会话里说：
@@ -214,6 +214,27 @@ npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
 npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
 npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop --json
 ```
+
+### 自动修复（0.4.0 新增）
+
+只修**改法唯一**的问题，默认只出计划、不写盘：
+
+```bash
+# 看要改什么（一个字节都不写）
+npx --package dsh-skill-doctor dsh-skill-lint ~/.claude/skills --fix
+
+# 确认后真正写入
+npx --package dsh-skill-doctor dsh-skill-lint ~/.claude/skills --fix --apply
+
+# 只修其中一条
+npx --package dsh-skill-doctor dsh-skill-lint . --fix --only SD013
+```
+
+能自动修的就两条：**SD013 BOM**（删掉开头 3 个字节）、**SD014 CRLF**（`\r\n` 换成 `\n`）。写入前会在同目录留一份 `<文件>.bak`，写完立刻按同一份配置复验；复验发现新错误就用备份还原，并如实报出来。
+
+**刻意不修的**：简介怎么重写、同名技能留哪一个、可疑指令要不要删——这些没有唯一答案，自动改等于替你猜意图，猜错比不修更麻烦。`--fix` 报告末尾会列出“命中了但没动”的规则和原因。
+
+`SD010` 也在排除之列：只有 `"maybe"`、`2` 这类**猜不出意图**的值才会报这条；而旧字段名 `modelInvocable` 改成 `disable-model-invocation` 需要**取反**，那是语义改写，不是改名。
 
 退出码：`0` 通过，`1` 有 error（或 `--warn-as-error` 时存在 warn），`2` 参数/读取错误。
 

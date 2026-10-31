@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 /** dsh-skill-lint：不依赖 dsh 运行时的技能 lint CLI，供技能作者与 CI 使用。 */
-import { resolveConfig, withRuleFilter } from './config.js'
-import { RULE_IDS } from './scanner/rules.js'
-import { scanRoots } from './scanner/fs-scan.js'
-import { lintSkills } from './scanner/scan.js'
+import { resolveConfig, withRuleFilter, type ResolvedConfig } from './config.js'
+import { RULE_IDS, RULES } from './scanner/rules.js'
+import { scanRoots, scanSkillFile } from './scanner/fs-scan.js'
+import { lintSkill, lintSkills } from './scanner/scan.js'
 import { renderLintJson, renderLintMarkdown } from './tools/report.js'
 import { renderPluginJson, renderPluginMarkdown } from './plugins/report.js'
 import { scanProfile } from './plugins/scan.js'
-import type { Severity } from './types.js'
+import { applyFixes, type FixOutcome, type Verify } from './fixer/apply.js'
+import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
+import { renderFixJson, renderFixMarkdown, type UnfixableHit } from './fixer/report.js'
+import type { ScanResult, Severity } from './types.js'
 
-const VERSION = '0.3.0'
+const VERSION = '0.4.0'
 
 interface CliOptions {
   readonly paths: string[]
@@ -23,6 +26,9 @@ interface CliOptions {
   readonly version: boolean
   readonly plugins: boolean
   readonly profile?: string
+  readonly fix: boolean
+  readonly apply: boolean
+  readonly only?: FixableRule[]
 }
 
 function fail(message: string): never {
@@ -49,6 +55,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let version = false
   let plugins = false
   let profile: string | undefined
+  let fix = false
+  let apply = false
+  const only: FixableRule[] = []
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
@@ -57,6 +66,20 @@ function parseArgs(argv: readonly string[]): CliOptions {
       case '--warn-as-error': warnAsError = true; break
       case '--plugins': plugins = true; break
       case '--profile': profile = argv[++i]; break
+      case '--fix': fix = true; break
+      case '--apply': apply = true; break
+      case '--only': {
+        const value = argv[++i]
+        if (value === undefined) fail(`--only must be one of: ${FIXABLE_RULES.join(', ')}`)
+        for (const part of value.split(',')) {
+          const name = part.trim().toUpperCase()
+          if (!(FIXABLE_RULES as readonly string[]).includes(name)) {
+            fail(`--only must be one of: ${FIXABLE_RULES.join(', ')}`)
+          }
+          only.push(name as FixableRule)
+        }
+        break
+      }
       case '--all': break
       case '--help':
       case '-h': help = true; break
@@ -86,6 +109,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
     }
   }
 
+  // --apply 单独出现是没意义的，也最可能是手滑；直接拒绝比“静默什么都做”好。
+  if (apply && !fix) fail('--apply only makes sense together with --fix')
+
   return {
     paths: paths.length === 0 ? ['.'] : paths,
     json,
@@ -96,6 +122,9 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...rules.length === 0 ? {} : { rules },
     plugins,
     ...profile === undefined ? {} : { profile },
+    fix,
+    apply,
+    ...only.length === 0 ? {} : { only },
     help,
     version,
   }
@@ -117,14 +146,98 @@ function usage(): string {
     '  --severity <level>     info | warn | error (default info)',
     '  --rule <id>            only run this rule; repeatable',
     '  --all                  accepted for compatibility (roots are scanned one level)',
+    '',
+    'Fix options (only byte-exact fixes; semantic problems are never touched):',
+    `  --fix                  plan fixes for ${FIXABLE_RULES.join(' / ')}; writes nothing`,
+    '  --apply                write the planned fixes (backs up to <file>.bak first)',
+    `  --only <rule,...>      restrict --fix to these rules: ${FIXABLE_RULES.join(', ')}`,
+    '',
     '  --help, -h             show this help',
     '  --version, -v          show version',
-    '  --plugins              check installed plugins instead of skills',
     '',
     `Rules: ${RULE_IDS.join(', ')}`,
     '',
     'Exit codes: 0 clean, 1 findings, 2 usage/read error.',
   ].join('\n')
+}
+
+/** 汇总“命中了但不在可修范围”的规则，报告里要解释为什么没动它们。 */
+function summarizeUnfixable(result: ScanResult): UnfixableHit[] {
+  const counts = new Map<string, number>()
+  for (const item of result.results) {
+    for (const finding of item.findings) {
+      if ((FIXABLE_RULES as readonly string[]).includes(finding.rule)) continue
+      counts.set(finding.rule, (counts.get(finding.rule) ?? 0) + 1)
+    }
+  }
+  return [...counts].map(([rule, count]) => ({
+    rule,
+    count,
+    plainTitle: RULES[rule as keyof typeof RULES].plainTitle,
+  }))
+}
+
+/**
+ * `--fix` 分支：默认只出计划，`--apply` 才落盘。
+ * @param options - 已解析的命令行选项。
+ * @param result - 本次 lint 的完整结果（修复计划与复验基线都来自它）。
+ * @param config - 用户配置（只读，取 maxFileBytes）。
+ * @param effective - 叠加了 --rule/--severity 的配置，复验必须用同一份，
+ *                    否则“修完的错误数”和“原来的错误数”没有可比性。
+ */
+async function runFix(
+  options: CliOptions,
+  result: ScanResult,
+  config: ResolvedConfig,
+  effective: ResolvedConfig,
+): Promise<void> {
+  const plan = await planFixes(result.results, options.only ?? FIXABLE_RULES)
+  const unfixable = summarizeUnfixable(result)
+
+  let outcomes: FixOutcome[] | undefined
+  if (options.apply && plan.targets.length > 0) {
+    // 复验基线：同一份文件修复前有多少个 error。
+    // 只看 error 而不是全部 finding，是因为修 BOM 可能顺带让 SD001 消失，那是好事。
+    const baseline = new Map<string, number>()
+    for (const item of result.results) {
+      if (item.skill.path !== undefined) baseline.set(item.skill.path, item.errors)
+    }
+
+    const verify: Verify = async target => {
+      // 按文件重新扫一遍，而不是复用内存里的对象：要证明的是“磁盘上现在这份是好的”。
+      const skill = await scanSkillFile(target.file, config.maxFileBytes)
+      if (skill === undefined) return ['修复后这个文件读不出来了']
+      const after = await lintSkill(skill, effective)
+      const problems: string[] = []
+      const remaining = [...new Set(
+        after.findings
+          .filter(item => item.rule === 'SD013' || item.rule === 'SD014')
+          .map(item => item.rule),
+      )]
+      if (remaining.length > 0) problems.push(`修完仍然命中 ${remaining.join('、')}`)
+      const errorsBefore = baseline.get(target.file)
+      if (errorsBefore !== undefined && after.errors > errorsBefore) {
+        problems.push(`修完出现了新的错误（现在 ${after.errors} 个，原来 ${errorsBefore} 个）`)
+      }
+      return problems
+    }
+
+    outcomes = await applyFixes(plan.targets, verify)
+  }
+
+  const report = {
+    plan,
+    ...outcomes === undefined ? {} : { outcomes },
+    unfixable,
+  }
+  process.stdout.write(`${options.json ? renderFixJson(report) : renderFixMarkdown(report)}\n`)
+
+  if (outcomes === undefined) {
+    // 试运行：有可修项就返回 1，等于告诉 CI“还有能自动清理的东西”。
+    process.exitCode = plan.targets.length === 0 ? 0 : 1
+    return
+  }
+  process.exitCode = outcomes.every(item => item.status === 'applied') ? 0 : 1
 }
 
 async function main(): Promise<void> {
@@ -168,6 +281,12 @@ async function main(): Promise<void> {
 
   const effective = withRuleFilter(config, options.rules, options.severity)
   const result = await lintSkills(scan.skills, effective)
+
+  if (options.fix) {
+    await runFix(options, result, config, effective)
+    return
+  }
+
   const reportOptions = { maxDescriptionLength: config.maxDescriptionLength }
   process.stdout.write(`${options.json
     ? renderLintJson(result, reportOptions)

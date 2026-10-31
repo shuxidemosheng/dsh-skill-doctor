@@ -16,7 +16,7 @@ It is not a marketplace and not a security scanner. It answers one question: **c
 ## Install
 
 ```bash
-dsh plugin --profile <profile> add dsh-skill-doctor@0.2.0
+dsh plugin --profile <profile> add dsh-skill-doctor@0.4.0
 ```
 
 Then ask in chat:
@@ -106,6 +106,22 @@ npx --package dsh-skill-doctor dsh-skill-lint ./skills/code-review
 npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
 npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
 ```
+
+### Safe auto-fixes (new in 0.4.0)
+
+Only fixes where there is exactly one possible result. Dry run by default:
+
+```bash
+dsh-skill-lint ~/.claude/skills --fix              # plan only, writes nothing
+dsh-skill-lint ~/.claude/skills --fix --apply      # write, with backups
+dsh-skill-lint . --fix --only SD013                # restrict to one rule
+```
+
+Two rules are fixable: **SD013 BOM** (drop the leading three bytes) and **SD014 CRLF** (`\r\n` to `\n`). Each write is preceded by a `<file>.bak` backup and followed by a re-lint with the same config; if the re-lint finds a new error, the file is restored from the backup and the failure is reported.
+
+**Deliberately not fixed**: rewriting a description, choosing between shadowed skills, deciding whether a suspicious instruction is malicious. There is no single right answer, and guessing is worse than leaving it alone. The report lists every rule that fired but was skipped.
+
+`SD010` is excluded on purpose: it only fires for values whose intent cannot be guessed (`"maybe"`, `2`), and turning the legacy `modelInvocable` into `disable-model-invocation` requires **inverting** it — that is a semantic rewrite, not a rename.
 
 Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usage/read error.
 
