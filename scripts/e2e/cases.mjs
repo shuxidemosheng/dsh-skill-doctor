@@ -108,6 +108,21 @@ export const CASES = [
     },
   },
 
+  {
+    id: 'A7',
+    group: 'A',
+    title: '插件冲突体检：plugin_doctor',
+    task: 'Use the plugin_doctor tool exactly once with arguments {"profile":"headless"}. '
+      + 'Then output the complete tool result verbatim. Do not use any other tool.',
+    setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
+    expect: {
+      exitCode: 0,
+      tool: 'plugin_doctor',
+      inputMatch: { profile: 'headless' },
+      resultIncludes: ['插件体检', '结论：'],
+    },
+  },
+
   // ---------- B 边界与异常 ----------
   {
     id: 'B1',

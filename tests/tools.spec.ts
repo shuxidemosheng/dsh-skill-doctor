@@ -19,7 +19,7 @@ describe('apply(): registration and yield discipline', () => {
   it('registers skill_doctor, skill_lint and skill_explain', async () => {
     const env = await envWith('good-skill')
     apply(env.ctx as never, undefined)
-    expect([...env.tools.keys()].sort()).toEqual(['skill_doctor', 'skill_explain', 'skill_lint'])
+    expect([...env.tools.keys()].sort()).toEqual(['plugin_doctor', 'skill_doctor', 'skill_explain', 'skill_lint'])
   })
 
   it('yields when a tool name is already registered', async () => {

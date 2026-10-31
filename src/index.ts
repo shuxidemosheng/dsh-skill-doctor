@@ -2,8 +2,10 @@
  * dsh-skill-doctor —— 技能体检。
  *
  * 模型工具：
+ *   skill_doctor  —— 技能体检（结论优先）
  *   skill_lint    —— 静态 lint（frontmatter/name/description/体积/引用/遮蔽/可疑指令）
  *   skill_explain —— 解释一个技能为什么没出现、没被模型选中、或加载失败
+ *   plugin_doctor —— 已安装插件之间的结构性冲突（抢同一条目、重复安装、装了没启用）
  *
  * CLI：`dsh-skill-lint`，给技能作者和 CI 用。
  *
@@ -21,6 +23,7 @@ import type { Config } from './config.js'
 import { buildDoctorTool } from './tools/doctor.js'
 import { buildExplainTool } from './tools/explain.js'
 import { buildLintTool } from './tools/lint.js'
+import { buildPluginTool } from './tools/plugin.js'
 
 export const name = 'skill-doctor'
 
@@ -28,7 +31,7 @@ export const name = 'skill-doctor'
 export const inject = ['tools', 'skills', 'workingDirectory'] as const
 
 /** 本插件注册的工具名（与 tools 数组顺序一致）。 */
-const TOOL_NAMES = ['skill_doctor', 'skill_lint', 'skill_explain'] as const
+const TOOL_NAMES = ['skill_doctor', 'skill_lint', 'skill_explain', 'plugin_doctor'] as const
 
 /**
  * 注册技能体检工具。
@@ -50,6 +53,7 @@ export function apply(ctx: Context, config: Config | undefined): void {
     buildDoctorTool(ctx, resolved),
     buildLintTool(ctx, resolved),
     buildExplainTool(ctx, resolved),
+    buildPluginTool(ctx, resolved),
   ]
   for (const [index, tool] of tools.entries()) {
     const toolName = TOOL_NAMES[index]!

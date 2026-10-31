@@ -104,9 +104,20 @@ The package ships `dsh-skill-lint`, which does not need the dsh runtime:
 npx --package dsh-skill-doctor dsh-skill-lint .
 npx --package dsh-skill-doctor dsh-skill-lint ./skills/code-review
 npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
+npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
 ```
 
 Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usage/read error.
+
+### `plugin_doctor` (new in 0.3.0)
+
+Checks the plugins installed in a profile for structural conflicts: a bundle listed twice, two plugins inserting the same loader entry, two plugins patching the same row (for example `agent-default-model`), a bundle whose package is missing, or a dependency that is installed but not enabled.
+
+```json
+{ "profile": "desktop" }
+```
+
+It reads `profiles/<name>/package.json` plus each plugin's `cordis.patch.yml`, so it needs no runtime state and changes nothing. Runtime tool-name collisions are **not** covered: the tool registry does not expose which plugin registered a name, and the report says so instead of guessing. Shipped `@deepseek-ai/*` bundles live inside `app.asar`, so entry conflicts are compared between profile plugins only.
 
 ## Config
 
