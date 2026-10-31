@@ -9,6 +9,7 @@
  * JSON 输出始终是技术形态（`renderLintJson`），机器读它，不做人话改写。
  */
 import { dirname } from 'node:path'
+import type { BaselineDiff, RuleDelta } from '../baseline.js'
 import { clusterFindings, clusterHint, type RuleCluster } from '../clusters.js'
 import { RULES } from '../scanner/rules.js'
 import type { Finding, ScanResult, Severity, SkillLintResult } from '../types.js'
@@ -28,6 +29,12 @@ export interface ReportOptions {
   readonly style?: 'plain' | 'technical'
   /** dsh 版本对照；没传就不显示校准信息（CLI 之外调用方可能拿不到）。 */
   readonly dshVersion?: DshVersionInfo
+  /** 复诊对比结果；传了才渲染「复诊对比」章节。 */
+  readonly baselineDiff?: BaselineDiff
+  /** 病历的展示标签（文件名 + 存档日期）；和 baselineDiff 一起传。 */
+  readonly baselineLabel?: string
+  /** 配置了病历但读不到时的提示路径；放技术细节里，不打断正文。 */
+  readonly baselineMissing?: string
 }
 
 function limitOf(options: ReportOptions): number {
@@ -217,7 +224,7 @@ function ruleSummary(findings: readonly Finding[]): string {
 }
 
 /** 单技能的“技术细节”附录：字段名带英文，方便对照文档和原始文件。 */
-function technicalFooter(result: SkillLintResult, limit: number, dsh?: DshVersionInfo): string[] {
+function technicalFooter(result: SkillLintResult, limit: number, dsh?: DshVersionInfo, baselineMissing?: string): string[] {
   const description = result.skill.description
   const lines = [
     '---',
@@ -235,6 +242,9 @@ function technicalFooter(result: SkillLintResult, limit: number, dsh?: DshVersio
   // 这把尺子是按哪个 dsh 版本校准的；版本漂了，“超长”就未必还是问题。
   const note = calibrationNote(dsh)
   if (note !== undefined) lines.push(`- ${note}`)
+  if (baselineMissing !== undefined) {
+    lines.push(`- 复诊：病历 \`${baselineMissing}\` 读不到（不存在或格式不对），跳过对比`)
+  }
   if (result.findings.length > 0) {
     lines.push(`- 命中规则：${ruleSummary(result.findings)}`)
   } else {
@@ -346,7 +356,7 @@ export function renderDoctorMarkdown(result: SkillLintResult, options: ReportOpt
   }
 
   while (lines.at(-1) === '') lines.pop()
-  lines.push('', ...technicalFooter(result, limit, options.dshVersion))
+  lines.push('', ...technicalFooter(result, limit, options.dshVersion, options.baselineMissing))
   return lines.join('\n')
 }
 
@@ -504,6 +514,54 @@ function clusterSection(clusters: readonly RuleCluster[], limit: number): string
 }
 
 /**
+ * 复诊对比章节。
+ *
+ * 医生看复诊单看的是差值：哪些好了、哪些没动、哪些新冒出来。
+ * 按规则聚合（与聚类同一哲学），只有"变差"才点名具体技能——那是要立刻看的新问题。
+ */
+function followUpSection(diff: BaselineDiff, label: string): string[] {
+  const lines: string[] = ['## 复诊对比', '', `对照上次的病历 ${label}，按规则看差值：`, '']
+  if (diff.metaWarning !== undefined) lines.push(`> ⚠️ ${diff.metaWarning}`, '')
+
+  const delta = (item: RuleDelta): string => `${item.plainTitle} ${item.before} → ${item.after}`
+  if (diff.improved.length > 0) {
+    lines.push(`- ✅ 好转：${diff.improved.map(delta).join('；')}`)
+  }
+  if (diff.unchanged.length > 0) {
+    lines.push(`- 😐 还没动：${diff.unchanged.map(delta).join('；')}`)
+  }
+  if (diff.regressed.length > 0) {
+    const parts = diff.regressed.map(item => {
+      const names = diff.regressedSkills[item.rule]
+      const who = names === undefined || names.length === 0 ? '' : `（${names.map(name => `\`${name}\``).join('、')}）`
+      return `${delta(item)}${who}`
+    })
+    lines.push(`- ⚠️ 变差：${parts.join('；')}`)
+  }
+  if (diff.newSkills.length > 0) {
+    lines.push(`- 🆕 这次新扫到：${diff.newSkills.map(name => `\`${name}\``).join('、')}`)
+  }
+  if (diff.goneSkills.length > 0) {
+    lines.push(`- 🗑 上次有、这次不在：${diff.goneSkills.map(name => `\`${name}\``).join('、')}（改名或删了？）`)
+  }
+
+  const nothingChanged = diff.improved.length === 0 && diff.regressed.length === 0
+    && diff.newSkills.length === 0 && diff.goneSkills.length === 0
+  if (diff.totalBefore === 0 && diff.totalAfter === 0) {
+    lines.push('', '上次和这次都是 0 处问题，保持健康。')
+  } else if (nothingChanged && diff.totalAfter === diff.totalBefore) {
+    lines.push('', `和上次完全一样：${diff.totalAfter} 处问题，一条没变。`)
+  } else {
+    const errorPart = diff.errorsBefore !== diff.errorsAfter
+      ? `；错误 ${diff.errorsBefore} → ${diff.errorsAfter}`
+      : ''
+    lines.push('', `整体：问题总数 ${diff.totalBefore} → ${diff.totalAfter}${errorPart}。`)
+  }
+  lines.push('')
+  return lines
+}
+
+/**
  * 多技能报告（通俗风格）。
  *
  * 30 个技能不能变成 30 段规则文本，所以这里只做三件事：
@@ -554,6 +612,11 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
     `- ✅ 没问题：${ok.length}`,
     '',
   )
+
+  // 复诊对比紧跟体检分布：刚修完的人第一眼想看的是“好了多少”。
+  if (options.baselineDiff !== undefined && options.baselineLabel !== undefined) {
+    lines.push(...followUpSection(options.baselineDiff, options.baselineLabel))
+  }
 
   // 共性问题放在逐个展开之前：先让人知道“13 个超长其实是一个模板问题”，
   // 再看下面的细节，才知道该改模板还是改单个文件。
@@ -618,6 +681,9 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
   lines.push('---', '', '## 技术细节（可跳过）', '')
   const note = calibrationNote(options.dshVersion)
   if (note !== undefined) lines.push(`- ${note}`, '')
+  if (options.baselineMissing !== undefined) {
+    lines.push(`- 复诊：病历 \`${options.baselineMissing}\` 读不到（不存在或格式不对），跳过对比`, '')
+  }
   if (hit.length === 0) {
     lines.push('所有技能都没有命中任何规则。')
   } else {
@@ -660,6 +726,20 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
       commonPrefix: cluster.commonPrefix ?? null,
       hint: clusterHint(cluster),
     })),
+    // 复诊对比给 CI 用：回归门禁可以直接读 regressed 数组。
+    ...options.baselineDiff === undefined ? {} : {
+      comparison: {
+        totalBefore: options.baselineDiff.totalBefore,
+        totalAfter: options.baselineDiff.totalAfter,
+        improved: options.baselineDiff.improved,
+        unchanged: options.baselineDiff.unchanged,
+        regressed: options.baselineDiff.regressed,
+        regressedSkills: options.baselineDiff.regressedSkills,
+        newSkills: options.baselineDiff.newSkills,
+        goneSkills: options.baselineDiff.goneSkills,
+        ...options.baselineDiff.metaWarning === undefined ? {} : { metaWarning: options.baselineDiff.metaWarning },
+      },
+    },
     ...options.dshVersion === undefined ? {} : { calibration: options.dshVersion },
     results: result.results.map(skill => ({
       name: skill.skill.name,

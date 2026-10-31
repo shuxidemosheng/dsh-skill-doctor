@@ -1,7 +1,9 @@
 /** skill_doctor：结论优先的单技能诊断 / 多技能体检。 */
+import { basename } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-working-directory'
+import { currentMetaOf, diffBaseline, expandHome, loadBaseline, type BaselineDiff } from '../baseline.js'
 import type { ResolvedConfig } from '../config.js'
 import { collectRuntimeSkills } from '../runtime.js'
 import { scanRoots } from '../scanner/fs-scan.js'
@@ -9,6 +11,24 @@ import { duplicateFindingsBySkill } from '../scanner/checks/duplicates.js'
 import { filterSkills, lintSkill, lintSkills } from '../scanner/scan.js'
 import { readDshVersion } from '../version-check.js'
 import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown } from './report.js'
+
+/**
+ * 读病历并算出复诊差值；任何失败都降级为「没有对比」，不影响体检本身。
+ * @returns diff 与展示标签；读不到病历时返回 missing 提示。
+ */
+async function followUp(
+  config: ResolvedConfig,
+  result: Awaited<ReturnType<typeof lintSkills>>,
+): Promise<{ diff?: BaselineDiff; label?: string; missing?: string }> {
+  if (config.baseline === undefined) return {}
+  const path = expandHome(config.baseline)
+  const baseline = await loadBaseline(path)
+  if (baseline === undefined) return { missing: path }
+  return {
+    diff: diffBaseline(baseline, result, currentMetaOf(config)),
+    label: `\`${basename(path)}\`（${baseline.savedAt.slice(0, 10)} 存档）`,
+  }
+}
 
 /**
  * 组装 skill_doctor 工具。
@@ -20,6 +40,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
     name: 'skill_doctor',
     description: 'Diagnose DeepSeek Harness skills in one screen. With a skill name, returns a verdict (usable / model-invisible / description truncated / broken), the exact catalog entry the model sees, ranked reasons, and copyable fixes. Without a name, returns a grouped report: which skills need fixing, which descriptions get truncated, which have other warnings, and which are healthy. '
       + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
+      + 'If a baseline record (saved once by the CLI via --save) is configured under config key `baseline`, the report opens with a follow-up comparison against it: what improved, what is untouched, what regressed. '
       + 'Use this first when a skill does not appear, does not respond, or seems ignored. It only reads files and never changes or executes a skill. '
       + 'The report is Markdown: show it to the user as Markdown (headings, table, emphasis) — never paste it inside a code block or quote it as raw text.',
     parameters: {
@@ -102,6 +123,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       const reportOptions = {
         maxDescriptionLength: config.maxDescriptionLength,
         dshVersion: await readDshVersion(),
+        ...await followUp(config, result),
       }
       return args.format === 'json'
         ? renderLintJson(result, reportOptions)
