@@ -18,7 +18,7 @@
 
 | 项 | 状态 |
 |---|---|
-| 项目目录 | `D:\AIcoding\dsh-skill-doctor` |
+| 项目目录 | `<repo>` |
 | 版本 | `0.3.0`（npm 已发布 0.2.0，0.3.0 待发布） |
 | npm 包名 | `dsh-skill-doctor`（已确认可用，尚未发布） |
 | CLI bin | `dsh-skill-lint` |
@@ -28,9 +28,9 @@
 | 构建 | `lib/index.js`、`lib/cli.js` 正常 |
 | smoke | `smoke ok` |
 | Mimosa 深度扫描 | 0 findings，scanId `scan-2026-10-28T09-59-40.211Z-e776b4c3fa06` |
-| desktop profile | 已安装为 `link:D:/AIcoding/dsh-skill-doctor`，**需要重启桌面端才加载** |
-| web profile | 已安装为 `link:D:/AIcoding/dsh-skill-doctor` |
-| headless profile | 已安装为 `link:D:/AIcoding/dsh-skill-doctor`，用于真实 dsh 测试 |
+| desktop profile | 已安装为 `link:<repo>`，**需要重启桌面端才加载** |
+| web profile | 已安装为 `link:<repo>` |
+| headless profile | 已安装为 `link:<repo>`，用于真实 dsh 测试 |
 
 ---
 
@@ -252,14 +252,14 @@ headless 模板默认把 `credentials`、`authorization`、`deepseek-account` �
 桌面端读的是 `desktop` profile，不是 `web`；CLI 无法直接 boot `desktop`（`profile "desktop" is managed exclusively by the Electron application`）。真实功能测试使用 `headless` profile：
 
 ```text
-C:\Users\fenghaoyu\.dsh\profiles\headless
+%USERPROFILE%\.dsh\profiles\headless
 bundles: @deepseek-ai/dsh-base, @deepseek-ai/dsh-headless, dsh-skill-doctor
 ```
 
 因为 headless 默认 provider 没有凭据，测试时使用一个临时 patch：
 
 ```text
-C:\Users\fenghaoyu\AppData\Local\Temp\dsh-headless-provider.yml
+%TEMP%\dsh-headless-provider.yml
 ```
 
 内容要点：
@@ -289,7 +289,7 @@ C:\Users\fenghaoyu\AppData\Local\Temp\dsh-headless-provider.yml
 临时 PowerShell 脚本：
 
 ```text
-C:\Users\fenghaoyu\AppData\Local\Temp\run-dsh-headless.ps1
+%TEMP%\run-dsh-headless.ps1
 ```
 
 它从 `~/.dsh/.credentials.yaml` 的 `refs` 读取 `OPENAI_COMPLETIONS_API_KEY`，再运行：
@@ -297,7 +297,7 @@ C:\Users\fenghaoyu\AppData\Local\Temp\run-dsh-headless.ps1
 ```powershell
 & 'D:\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd' `
   --profile headless `
-  --patch 'C:\Users\fenghaoyu\AppData\Local\Temp\dsh-headless-provider.yml' `
+  --patch '%TEMP%\dsh-headless-provider.yml' `
   $Task
 ```
 
@@ -305,19 +305,19 @@ C:\Users\fenghaoyu\AppData\Local\Temp\run-dsh-headless.ps1
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File `
-  "C:\Users\fenghaoyu\AppData\Local\Temp\run-dsh-headless.ps1" `
-  -Task "Use the skill_doctor tool exactly once with arguments {""extraRoots"":[""C:/Users/fenghaoyu/.claude/skills""]}. Then output the complete tool result verbatim, without summarizing or editing. Do not use any other tool."
+  "%TEMP%\run-dsh-headless.ps1" `
+  -Task "Use the skill_doctor tool exactly once with arguments {""extraRoots"":[""~/.claude/skills""]}. Then output the complete tool result verbatim, without summarizing or editing. Do not use any other tool."
 ```
 
 ### 安全注意
 
 - **不要**把临时 patch、临时脚本或 `~/.dsh/.credentials.yaml` 提交到仓库。
-- 会话记录中曾出现 `OPENAI_COMPLETIONS_API_KEY` 的值；如果这份记录要给他人看，建议轮换该 key。交接文档里不要写 key。
+- 任何临时 patch、脚本、日志都不写入 key 值；交接文档里也不要出现 key。
 - 本地 gateway 在 `http://127.0.0.1:7863/v1`，需要 `OPENAI_COMPLETIONS_API_KEY`。
 
 ### 真实测试结果（2026-10-28）
 
-扫描 `C:/Users/fenghaoyu/.claude/skills`：
+扫描 `~/.claude/skills`：
 
 ```text
 30 个技能：0 需要修复 / 13 描述会被截断 / 1 其他提示 / 16 正常
@@ -424,13 +424,13 @@ npm run build
 npm run smoke
 
 # CLI 真实技能
-node lib/cli.js "C:/Users/fenghaoyu/.claude/skills"
-node lib/cli.js "C:/Users/fenghaoyu/.claude/skills/nature-citation"
-node lib/cli.js "C:/Users/fenghaoyu/.claude/skills" --json
+node lib/cli.js "~/.claude/skills"
+node lib/cli.js "~/.claude/skills/nature-citation"
+node lib/cli.js "~/.claude/skills" --json
 
 # 本地安装到 profile（link 适合开发迭代）
-dsh plugin --profile headless add link:D:\AIcoding\dsh-skill-doctor
-dsh plugin --profile desktop add link:D:\AIcoding\dsh-skill-doctor
+dsh plugin --profile headless add link:<repo>
+dsh plugin --profile desktop add link:<repo>
 # desktop 安装后需要完全退出并重开桌面端
 ```
 
