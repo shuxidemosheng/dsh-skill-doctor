@@ -346,12 +346,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `
 - 如果想做，先读 `docs/subsystems/llm-streaming.md` 的 `ctx.llm.stream()`、`GenerateOptions`、`StreamChunk`。
 - 注意：需要选择 provider/model；当前桌面端本地 gateway 可用 `openai-completions` + `cn:deepseek-v4.1-flash`。
 
-### P2（发布前）
+### P2（发布）
 
-- `git init` + 本地 commit（不要 push，等用户明确说“推送”）。
-- `npm pack --dry-run` 检查内容。
-- Mimosa deep scan。
-- npm publish 由用户本人在自己终端执行（2FA/EOTP）；ZCode 只负责构建、commit、发布后核验。
+- ~~`git init` + 本地 commit~~ 已完成：本地 main 两个提交（43f2b1b、publishConfig）。
+- ~~推 GitHub~~ 已完成（2026-10-31）：https://github.com/shuxidemosheng/dsh-skill-doctor 公开仓库，
+  远端 main = `ab00206`，tag `v0.2.0`，topics 已设置。
+- **推送方式的特殊情况**：本机直连 `github.com:443` 不通（直连超时；WorkBuddy 本地代理对 github.com 返回 502），
+  但 `api.github.com` 可直连。所以首次推送与后续补推都走 GitHub Git Data API（gh api 建 blob → tree →
+  commit → 更新 ref），没有用 `git push`。后果：本地 commit sha 与远端不一致（内容相同），
+  `git fetch/push` 仍然会失败，需要代理恢复后用 `git fetch && git reset --hard origin/main` 对齐。
+- `npm pack --dry-run` 已检查：43 个文件、70.9 kB，含 `lib/`、`cordis.patch.yml`、两份 README。
+- `package.json` 加了 `publishConfig.registry = https://registry.npmjs.org/`（本机默认是 npmmirror 镜像）。
+- **npm publish 未做**：本机 `npm whoami` 未登录，需用户本人 `npm login --registry https://registry.npmjs.org/`
+  后执行 `npm publish`（2FA/EOTP）。发布后可核验 `npm view dsh-skill-doctor version`。
+- Mimosa deep scan 仍未跑。
 
 ---
 
