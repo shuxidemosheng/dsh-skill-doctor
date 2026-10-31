@@ -44,7 +44,7 @@ const ctx = {
 }
 
 apply(ctx, undefined)
-if ([...tools.keys()].sort().join(',') !== 'skill_doctor,skill_explain,skill_lint') {
+if ([...tools.keys()].sort().join(',') !== 'plugin_doctor,skill_doctor,skill_explain,skill_lint') {
   throw new Error(`unexpected tools: ${[...tools.keys()].join(',')}`)
 }
 

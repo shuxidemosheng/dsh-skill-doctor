@@ -2,7 +2,7 @@
 
 > 这份文件是给下一个会话/接手人的完整上下文。读完后应能直接继续开发，不需要重新调研市场或猜测设计意图。
 >
-> 最后更新：2026-10-28（P0 通俗化已完成），版本 0.2.0。
+> 最后更新：2026-10-31（0.3.0：新增 plugin_doctor），版本 0.3.0。
 
 ---
 
@@ -19,12 +19,12 @@
 | 项 | 状态 |
 |---|---|
 | 项目目录 | `D:\AIcoding\dsh-skill-doctor` |
-| 版本 | `0.2.0` |
+| 版本 | `0.3.0`（npm 已发布 0.2.0，0.3.0 待发布） |
 | npm 包名 | `dsh-skill-doctor`（已确认可用，尚未发布） |
 | CLI bin | `dsh-skill-lint` |
 | git | **尚未 `git init` / commit** |
-| 测试 | 34 passed（4 个 spec 文件） |
-| e2e（真实 dsh） | 21 个用例：A 6/6、B 11/11、C 3/3、D 3/3 |
+| 测试 | 41 passed（5 个 spec 文件） |
+| e2e（真实 dsh） | 22 个用例：A 7/7、B 11/11、C 3/3、D 3/3 |
 | 构建 | `lib/index.js`、`lib/cli.js` 正常 |
 | smoke | `smoke ok` |
 | Mimosa 深度扫描 | 0 findings，scanId `scan-2026-10-28T09-59-40.211Z-e776b4c3fa06` |
@@ -33,6 +33,26 @@
 | headless profile | 已安装为 `link:D:/AIcoding/dsh-skill-doctor`，用于真实 dsh 测试 |
 
 ---
+
+## 1.5 0.3.0 新增：plugin_doctor（插件冲突体检）
+
+需求原话：“可以检测 DSH 上已安装的插件是否冲突？”
+
+- 新工具 `plugin_doctor({ profile?, format? })`，只读，返回人话报告。
+- 数据源全部是磁盘：`$DSH_HOME/profiles/<p>/package.json`（bundles 顺序 + dependencies spec）、
+  每个 bundle 的 `node_modules/<name>/package.json` 与 `cordis.patch.yml`。
+- 四条规则：PL001 重复 bundle（warn）、PL002 两个插件 insert 同一条目（warn）、
+  PL003 两个插件改同一条目（warn，后加载覆盖前面的）、PL004 启用了没包（error）/ 装了没启用（info）。
+- 包来源三分：`profile`（node_modules 里可读）/ `shipped`（`@deepseek-ai/*`，在 app.asar 内）/
+  `missing`。**shipped 不能算缺失**，这是第一版最大的误报来源，已修。
+- 明确查不到：运行时工具名被两个插件同时注册（注册表不暴露归属）；shipped 插件的 patch 读不到，
+  所以条目冲突只在 profile 插件之间比对。报告里写明了这两条，不猜。
+- 代码：`src/plugins/scan.ts`（解析+规则）、`src/plugins/report.ts`（渲染）、`src/tools/plugin.ts`（工具）。
+  CLI 加 `--plugins --profile <name>`（不依赖 dsh 运行时），有 error 级冲突时退出码 1。
+- 测试：`tests/plugins.spec.ts` 6 条（含 PL002/PL003 正例、shipped 不误报、profile 不存在）；
+  e2e 新增 A7（真实 dsh 里调用 plugin_doctor）。
+- 真实数据：desktop profile 10 个 bundle（7 本地 + 3 自带），没有条目冲突；headless 3 个（1 本地 + 2 自带）。
+- 版本从 0.2.0 → 0.3.0，package 描述同步。
 
 ## 2. 用户最新的明确要求（已实现，保留作验收依据）
 

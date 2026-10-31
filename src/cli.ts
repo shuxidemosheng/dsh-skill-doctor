@@ -5,9 +5,11 @@ import { RULE_IDS } from './scanner/rules.js'
 import { scanRoots } from './scanner/fs-scan.js'
 import { lintSkills } from './scanner/scan.js'
 import { renderLintJson, renderLintMarkdown } from './tools/report.js'
+import { renderPluginJson, renderPluginMarkdown } from './plugins/report.js'
+import { scanProfile } from './plugins/scan.js'
 import type { Severity } from './types.js'
 
-const VERSION = '0.1.0'
+const VERSION = '0.3.0'
 
 interface CliOptions {
   readonly paths: string[]
@@ -19,6 +21,8 @@ interface CliOptions {
   readonly rules?: string[]
   readonly help: boolean
   readonly version: boolean
+  readonly plugins: boolean
+  readonly profile?: string
 }
 
 function fail(message: string): never {
@@ -43,12 +47,16 @@ function parseArgs(argv: readonly string[]): CliOptions {
   const rules: string[] = []
   let help = false
   let version = false
+  let plugins = false
+  let profile: string | undefined
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!
     switch (arg) {
       case '--json': json = true; break
       case '--warn-as-error': warnAsError = true; break
+      case '--plugins': plugins = true; break
+      case '--profile': profile = argv[++i]; break
       case '--all': break
       case '--help':
       case '-h': help = true; break
@@ -86,6 +94,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...maxBodyTokens === undefined ? {} : { maxBodyTokens },
     ...severity === undefined ? {} : { severity },
     ...rules.length === 0 ? {} : { rules },
+    plugins,
+    ...profile === undefined ? {} : { profile },
     help,
     version,
   }
@@ -98,6 +108,8 @@ function usage(): string {
     'Scan skill files and report structural, budget, reference and heuristic findings.',
     '',
     'Options:',
+    '  --plugins              check installed plugins for structural conflicts (no skill scanning)',
+    '  --profile <name>       profile to inspect with --plugins (default desktop)',
     '  --json                 machine-readable output',
     '  --warn-as-error        exit 1 when any warning is present',
     '  --max-description <n>  description length limit (default 500)',
@@ -107,6 +119,7 @@ function usage(): string {
     '  --all                  accepted for compatibility (roots are scanned one level)',
     '  --help, -h             show this help',
     '  --version, -v          show version',
+    '  --plugins              check installed plugins instead of skills',
     '',
     `Rules: ${RULE_IDS.join(', ')}`,
     '',
@@ -122,6 +135,14 @@ async function main(): Promise<void> {
   }
   if (options.version) {
     process.stdout.write(`${VERSION}\n`)
+    return
+  }
+
+  // 插件体检不依赖技能扫描，也不读技能配置，先单独分流。
+  if (options.plugins) {
+    const report = await scanProfile(options.profile ?? 'desktop')
+    process.stdout.write(`${options.json ? renderPluginJson(report) : renderPluginMarkdown(report)}\n`)
+    process.exitCode = report.conflicts.some(item => item.severity === 'error') ? 1 : 0
     return
   }
 

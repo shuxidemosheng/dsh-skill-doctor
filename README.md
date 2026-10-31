@@ -20,7 +20,7 @@
 ## 快速开始
 
 ```bash
-dsh plugin --profile <你的profile> add dsh-skill-doctor@0.2.0
+dsh plugin --profile <你的profile> add dsh-skill-doctor@0.3.0
 ```
 
 装完重启（或等 HMR）。然后直接在会话里说：
@@ -105,7 +105,7 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor@0.2.0
 
 > SD012 只是启发式：命中不等于恶意，需要人工复核。它不替代安全审查。
 
-## 三个工具
+## 四个工具
 
 ### `skill_doctor`（推荐先用）
 
@@ -165,6 +165,27 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor@0.2.0
 - 可能原因：`disable-model-invocation=true`、description 被截断、同名遮蔽、虚拟技能、provider 加载失败
 - 配置了 `extraRoots` 时，列出同名候选
 
+### `plugin_doctor`（0.3.0 新增）
+
+查**已安装插件之间**的结构性冲突。技能没生效是一类问题，插件互相打架是另一类——典型症状是“某个插件的工具突然不见了”，或者“改了半天配置没反应”。
+
+```json
+{ "profile": "desktop" }
+```
+
+它从 profile 的 `package.json`、`cordis.yml` 和每个插件的 `cordis.patch.yml` 里读出实际安装与组合结果，检查四件事：
+
+| ID | 级别 | 检查 | 典型症状 |
+|---|---|---|---|
+| PL001 | warn | 同一个插件在 `dsh.profile.bundles` 里出现多次 | 插件被重复装载 |
+| PL002 | warn | 两个插件各自 `insert` 同一条目 id | 只有一个生效，另一个功能丢失 |
+| PL003 | warn | 两个插件同时改同一条目（如 `agent-default-model`） | 后加载的覆盖前面的，设置静默失效 |
+| PL004 | error/info | 启用了但包不在（error）/ 装了但没启用（info） | 启动报错，或功能不出现 |
+
+输出格式和技能报告一致：结论、插件清单表、冲突逐条说明“现在/怎么改”，技术细节放最后。
+
+**它查不到的**：工具名被两个插件同时注册属于运行时冲突，dsh 的工具注册表不暴露“这个工具是谁注册的”，所以这里不做猜测，报告里会写明。dsh 自带插件（`@deepseek-ai/*`）的 patch 在 `app.asar` 里读不到，条目冲突只在 profile 插件之间比对。
+
 ## CLI：给技能作者和 CI
 
 插件同时提供 `dsh-skill-lint`，**不需要 dsh 运行时**：
@@ -181,6 +202,10 @@ npx --package dsh-skill-doctor dsh-skill-lint ~/.claude/skills --all
 
 # CI：JSON + warn 也失败
 npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
+
+# 插件冲突体检（不需要 dsh 运行时，直接读 profile 目录）
+npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
+npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop --json
 ```
 
 退出码：`0` 通过，`1` 有 error（或 `--warn-as-error` 时存在 warn），`2` 参数/读取错误。
