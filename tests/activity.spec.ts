@@ -3,9 +3,18 @@ import {
   collectActivity,
   currentEntry,
   describeEntry,
+  emptyUsage,
+  loadUsage,
   mergeActivity,
   recent,
+  recordSession,
+  recordSkillLoad,
+  saveUsage,
+  skillLoadNames,
   summarize,
+  topSkills,
+  USAGE_MAX_SKILLS,
+  usageSummary,
   type ActivityEntry,
 } from '../src/activity'
 
@@ -138,5 +147,89 @@ describe('summarize and friends', () => {
   it('describes a skill load in plain words', () => {
     expect(describeEntry(entries[0]!)).toBe('读入技能 a')
     expect(describeEntry(entries[3]!)).toBe('pwsh · npm test')
+  })
+})
+
+// ---------- 跨会话使用统计 ----------
+
+/** localStorage 替身：Map 存储，行为与真的一致（可能抛错的场景单独模拟）。 */
+function fakeStorage(): Storage {
+  const map = new Map<string, string>()
+  return {
+    get length() { return map.size },
+    clear: () => map.clear(),
+    getItem: key => map.get(key) ?? null,
+    key: index => [...map.keys()][index] ?? null,
+    removeItem: key => { map.delete(key) },
+    setItem: (key, value) => { map.set(key, value) },
+  }
+}
+
+describe('usage stats (cross-session)', () => {
+  it('counts each skill load and remembers the last time', () => {
+    let usage = emptyUsage()
+    usage = recordSkillLoad(usage, 'a', 's1', new Date('2026-11-01T01:00:00Z'))
+    usage = recordSkillLoad(usage, 'a', 's1', new Date('2026-11-02T01:00:00Z'))
+    usage = recordSkillLoad(usage, 'b', 's2', new Date('2026-11-03T01:00:00Z'))
+    expect(usage.skills.a).toEqual({ loads: 2, lastUsed: '2026-11-02T01:00:00.000Z' })
+    const summary = usageSummary(usage)
+    expect(summary).toEqual({ totalLoads: 3, distinctSkills: 2, sessions: 2 })
+  })
+
+  it('ranks by loads, then by name', () => {
+    let usage = emptyUsage()
+    for (let i = 0; i < 3; i++) usage = recordSkillLoad(usage, 'b', undefined)
+    for (let i = 0; i < 5; i++) usage = recordSkillLoad(usage, 'a', undefined)
+    usage = recordSkillLoad(usage, 'c', undefined)
+    expect(topSkills(usage, 10).map(item => item.name)).toEqual(['a', 'b', 'c'])
+    expect(topSkills(usage, 2).map(item => item.name)).toEqual(['a', 'b'])
+  })
+
+  it('caps the skill table so names cannot grow forever', () => {
+    let usage = emptyUsage()
+    for (let i = 0; i < USAGE_MAX_SKILLS + 30; i++) usage = recordSkillLoad(usage, `skill-${i}`, undefined)
+    expect(Object.keys(usage.skills)).toHaveLength(USAGE_MAX_SKILLS)
+    // 被裁掉的应该是最少使用的：30 个多出来的名字消失，留下的都有 1 次。
+    expect(Object.values(usage.skills).every(usage => usage.loads === 1)).toBe(true)
+  })
+
+  it('records a session id once', () => {
+    let usage = emptyUsage()
+    usage = recordSession(usage, 's1')
+    usage = recordSession(usage, 's1')
+    usage = recordSession(usage, 's2')
+    expect(usageSummary(usage).sessions).toBe(2)
+  })
+
+  it('round-trips through storage', () => {
+    const storage = fakeStorage()
+    let usage = emptyUsage()
+    usage = recordSkillLoad(usage, 'a', 's1', new Date('2026-11-01T01:00:00Z'))
+    usage = recordSession(usage, 's1')
+    saveUsage(storage, usage)
+    expect(loadUsage(storage)).toEqual(usage)
+  })
+
+  it('falls back to an empty record instead of throwing', () => {
+    expect(loadUsage(undefined)).toEqual(emptyUsage())
+    const broken = fakeStorage()
+    broken.setItem('dsh-skill-doctor:usage', '{ not json')
+    expect(loadUsage(broken)).toEqual(emptyUsage())
+    const wrongVersion = fakeStorage()
+    wrongVersion.setItem('dsh-skill-doctor:usage', JSON.stringify({ version: 99, skills: {} }))
+    expect(loadUsage(wrongVersion)).toEqual(emptyUsage())
+    const garbageValues = fakeStorage()
+    garbageValues.setItem('dsh-skill-doctor:usage', JSON.stringify({ version: 1, skills: { a: { loads: 'many' } } }))
+    expect(loadUsage(garbageValues).skills).toEqual({})
+  })
+
+  it('picks skill loads with a name out of activities', () => {
+    const loaded = collectActivity(snapshotWith({
+      a1: { kind: 'assistant', blocks: [callBlock('skill', 'c1', '{"name":"nature-citation"}')] },
+      a2: { kind: 'assistant', blocks: [callBlock('skill', 'c2', '{}')] },
+      a3: { kind: 'assistant', blocks: [callBlock('skill_doctor', 'c3', '{"name":"x"}')] },
+    }))
+    // 没带名字的不计（不知道是哪个技能），本插件的工具更不算。
+    expect(skillLoadNames(loaded)).toEqual(['nature-citation'])
   })
 })

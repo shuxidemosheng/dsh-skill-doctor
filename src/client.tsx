@@ -16,10 +16,19 @@ import {
   collectActivity,
   currentEntry,
   describeEntry,
+  emptyUsage,
+  loadUsage,
   mergeActivity,
   recent,
+  recordSession,
+  recordSkillLoad,
+  saveUsage,
+  skillLoadNames,
   summarize,
+  topSkills,
+  usageSummary,
   type ActivityEntry,
+  type UsageRecord,
 } from './activity.js'
 
 /** 槽位注入的 props。只声明用到的部分，宿主给多了不影响。 */
@@ -42,8 +51,14 @@ const BAR_ID = 'skill-doctor-activity-bar'
 
 let entries: ActivityEntry[] = []
 let panelOpen = false
+let panelTab: 'activity' | 'usage' = 'activity'
 let inConversation = false
 let overlayMounted = false
+
+/** 跨会话使用统计；apply 时从 localStorage 载入，之后随调用累加。 */
+let usage: UsageRecord = emptyUsage()
+/** 已计入统计的 callId；换会话清空（快照里的 callId 不会跨会话重复）。 */
+const countedCallIds = new Set<string>()
 
 const listeners = new Set<() => void>()
 
@@ -58,6 +73,11 @@ const subscribe = (listener: () => void): (() => void) => {
   }
 }
 
+/** localStorage 的安全取用；宿主环境禁了就退化为“本次会话的统计”。 */
+function storageOf(): Storage | undefined {
+  return typeof localStorage === 'undefined' ? undefined : localStorage
+}
+
 /**
  * 把新解析出的活动并进 store。
  * @param next - 本次快照解析结果。
@@ -67,9 +87,24 @@ function pushActivity(next: readonly ActivityEntry[], sessionId: string | undefi
   const scope = sessionId ?? ''
   const changedScope = scope !== currentScope
   currentScope = scope
+  const known = new Set(countedCallIds)
   const merged = changedScope ? [...next] : mergeActivity(entries, next)
   if (merged.length === entries.length && merged.every((entry, index) => entry === entries[index])) return
   entries = merged
+
+  // 跨会话统计：只数“第一次见到”的调用，同一 callId 在窗口里反复出现不重复计。
+  let changedUsage = false
+  if (changedScope && scope !== '' && usage.sessions[scope] !== true) {
+    usage = recordSession(usage, scope)
+    changedUsage = true
+  }
+  const fresh = merged.filter(entry => !known.has(entry.callId))
+  for (const entry of fresh) countedCallIds.add(entry.callId)
+  for (const name of skillLoadNames(fresh)) {
+    usage = recordSkillLoad(usage, name, sessionId)
+    changedUsage = true
+  }
+  if (changedUsage) saveUsage(storageOf(), usage)
   emit()
 }
 
@@ -77,6 +112,11 @@ let currentScope: string | undefined
 
 function togglePanel(): void {
   panelOpen = !panelOpen
+  emit()
+}
+
+function switchTab(tab: 'activity' | 'usage'): void {
+  panelTab = tab
   emit()
 }
 
@@ -226,6 +266,94 @@ function ActivityRow(props: { readonly entry: ActivityEntry }): JSX.Element {
   )
 }
 
+/** 使用统计页：跨会话累计的技能加载排行。 */
+function UsageView(): JSX.Element {
+  const summary = usageSummary(usage)
+  const top = topSkills(usage, 10)
+  return (
+    <div>
+      {summary.totalLoads === 0 ? (
+        <div style={{ fontSize: 12, opacity: 0.65, lineHeight: 1.7 }}>
+          还没有统计：模型第一次用 <code>skill</code> 工具读技能后，这里会开始累计。
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', gap: 14, fontSize: 11, opacity: 0.75, padding: '2px 0 8px' }}>
+            <span>累计加载 <b>{summary.totalLoads}</b> 次</span>
+            <span>涉及 <b>{summary.distinctSkills}</b> 个技能</span>
+            <span>覆盖 <b>{summary.sessions}</b> 个会话</span>
+          </div>
+          <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
+            {top.map(item => (
+              <li
+                key={item.name}
+                style={{
+                  display: 'flex',
+                  gap: 8,
+                  alignItems: 'baseline',
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                }}
+              >
+                <span
+                  style={{
+                    flex: 'none',
+                    minWidth: 28,
+                    textAlign: 'right',
+                    fontVariantNumeric: 'tabular-nums',
+                    opacity: 0.75,
+                  }}
+                >
+                  {item.loads}
+                </span>
+                <span style={{ minWidth: 0, wordBreak: 'break-word' }}>{item.name}</span>
+                <span style={{ flex: 1 }} />
+                <span style={{ ...mutedStyle, flex: 'none', fontSize: 10 }}>
+                  {item.lastUsed.length >= 10 ? item.lastUsed.slice(0, 10) : ''}
+                </span>
+              </li>
+            ))}
+          </ol>
+          {summary.distinctSkills > top.length ? (
+            <div style={{ fontSize: 10, opacity: 0.55, padding: '6px 0 0' }}>
+              只显示前 {top.length} 名，共 {summary.distinctSkills} 个技能。
+            </div>
+          ) : null}
+        </>
+      )}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0 0' }}>
+        <span style={{ fontSize: 10, opacity: 0.55, flex: 1, lineHeight: 1.6 }}>
+          只统计本机（浏览器存储），不上传。模型直接 read 技能文件不计——读不到归属，宁可少记不记错。
+        </span>
+        {summary.totalLoads > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              if (typeof window !== 'undefined' && typeof window.confirm === 'function' && !window.confirm('清空使用统计？此操作不可恢复。')) return
+              usage = emptyUsage()
+              saveUsage(storageOf(), usage)
+              emit()
+            }}
+            style={{
+              flex: 'none',
+              padding: '2px 8px',
+              fontSize: 10,
+              borderRadius: TOKEN.radius,
+              border: `1px solid ${TOKEN.border}`,
+              background: 'transparent',
+              color: 'inherit',
+              cursor: 'pointer',
+              opacity: 0.7,
+            }}
+          >
+            清空
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 /** 浮层：挂在 body 上，避开槽位容器的 overflow 裁剪。 */
 function ActivityOverlay(): JSX.Element | null {
   const open = useSyncExternalStore(subscribe, () => panelOpen, () => panelOpen)
@@ -279,11 +407,40 @@ function ActivityOverlay(): JSX.Element | null {
         }}
       >
         <span aria-hidden="true">🩺</span>
-        <span>技能医生 · 活动</span>
+        <span>技能医生</span>
         <span style={{ flex: 1 }} />
-        <span style={{ ...mutedStyle, fontWeight: 400 }}>
-          {stats.skills} 技能 · {stats.plugin} 插件 · {stats.tools} 工具
-        </span>
+        <button
+          type="button"
+          onClick={() => switchTab('activity')}
+          style={{
+            padding: '2px 8px',
+            fontSize: 11,
+            borderRadius: TOKEN.radius,
+            border: `1px solid ${panelTab === 'activity' ? TOKEN.borderStrong : 'transparent'}`,
+            background: 'transparent',
+            color: 'inherit',
+            cursor: 'pointer',
+            fontWeight: panelTab === 'activity' ? 600 : 400,
+          }}
+        >
+          活动
+        </button>
+        <button
+          type="button"
+          onClick={() => switchTab('usage')}
+          style={{
+            padding: '2px 8px',
+            fontSize: 11,
+            borderRadius: TOKEN.radius,
+            border: `1px solid ${panelTab === 'usage' ? TOKEN.borderStrong : 'transparent'}`,
+            background: 'transparent',
+            color: 'inherit',
+            cursor: 'pointer',
+            fontWeight: panelTab === 'usage' ? 600 : 400,
+          }}
+        >
+          使用统计
+        </button>
         <button
           type="button"
           onClick={closePanel}
@@ -308,7 +465,9 @@ function ActivityOverlay(): JSX.Element | null {
       <div style={{ height: 1, background: TOKEN.border, opacity: 0.6 }} />
 
       <div style={{ overflowY: 'auto', padding: '10px 14px 12px' }}>
-        {visible.length === 0 ? (
+        {panelTab === 'usage' ? (
+          <UsageView />
+        ) : visible.length === 0 ? (
           <div style={{ fontSize: 12, opacity: 0.65, lineHeight: 1.7 }}>
             还没有工具调用。
             <br />
@@ -355,6 +514,8 @@ function ensureOverlay(): void {
  * @param ctx - 客户端上下文。
  */
 export function apply(ctx: { slots: { inject: (name: string, fn: () => void) => void; register: (options: Record<string, unknown>, component: unknown) => void } }): void {
+  // 统计是纯客户端状态：宿主注入完成后立刻从 localStorage 恢复累计值。
+  usage = loadUsage(storageOf())
   ensureOverlay()
   ctx.slots.inject('conversation.input.dock', () => {
     ctx.slots.register({ name: 'conversation.input.dock', id: BAR_ID, order: 60 }, ActivityBar)
