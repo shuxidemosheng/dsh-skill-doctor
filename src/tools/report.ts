@@ -53,7 +53,7 @@ function findingLine(finding: Finding, detailed: boolean): string[] {
 }
 
 /** 描述被截断时的影响评估。 */
-interface TruncationInfo {
+export interface TruncationInfo {
   readonly level: 'none' | 'low' | 'high'
   readonly cutLength: number
   readonly newTriggers: readonly string[]
@@ -73,7 +73,7 @@ function shortTrigger(value: string, max = 80): string {
  * 抽取出来的是整句（"Use when ..." / "Trigger on ..."），直接展示会很啰嗦，
  * 这里去掉开头的引导词、截到第一个逗号或句号，只留用户真正会说的那半句。
  */
-function triggerLabel(trigger: string, max = 40): string {
+export function triggerLabel(trigger: string, max = 40): string {
   const stripped = trigger
     .replace(/^(?:use when|use for|use this skill|triggers?(?:\s+on)?|when the user|used?\s+for|用于|当用户|适用于|适用|触发)\s*[:：]?\s*/i, '')
     .replace(/\s+/g, ' ')
@@ -83,7 +83,7 @@ function triggerLabel(trigger: string, max = 40): string {
 }
 
 /** 把多行文本压成一行，便于放在引用块里显示。 */
-function oneLine(text: string): string {
+export function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
@@ -99,7 +99,7 @@ function preview(text: string, max = 300): string {
  * 直接 slice(limit) 常常从半个单词开始（例如 "e text-to-reference"），
  * 这里把落点推到下一个空白，读起来才像正常文字。
  */
-function cutPreview(description: string, limit: number, max = 220): string {
+export function cutPreview(description: string, limit: number, max = 220): string {
   const cut = description.slice(limit)
   const firstSpace = cut.search(/\s/)
   const boundary = description.slice(limit - 1, limit + 1)
@@ -108,7 +108,7 @@ function cutPreview(description: string, limit: number, max = 220): string {
 }
 
 /** 从一段描述里提取“触发词/触发句”：引号短语 + Use when/用于 等标记句。 */
-function extractTriggers(text: string): string[] {
+export function extractTriggers(text: string): string[] {
   const quoted = [...text.matchAll(/["“「']([^"”」']{2,60})["”」']/g)]
     .map(match => match[1] ?? '')
   const markers: string[] = []
@@ -122,7 +122,7 @@ function extractTriggers(text: string): string[] {
   return unique([...quoted, ...markers]).slice(0, 8)
 }
 
-function analyzeTruncation(description: string, limit: number): TruncationInfo {
+export function analyzeTruncation(description: string, limit: number): TruncationInfo {
   if (description.length <= limit) return { level: 'none', cutLength: 0, newTriggers: [] }
   const visible = description.slice(0, limit)
   const cut = description.slice(limit)

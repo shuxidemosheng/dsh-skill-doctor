@@ -363,6 +363,24 @@ export const CASES = [
     setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
     expect: { exitCode: 0, tool: 'skill_doctor' },
   },
+  {
+    id: 'D4',
+    group: 'D',
+    title: '可用性：改写工单——诊断之后直接给改写材料，不越权写文件',
+    task: 'nature-citation 的简介太长了，用技能体检工具的改写模式给我出一份改写工单。',
+    setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
+    expect: {
+      exitCode: 0,
+      tool: 'skill_doctor',
+      custom: async ({ finalText }) => {
+        const text = String(finalText ?? '')
+        const failures = []
+        if (!text.includes('改写工单')) failures.push('最终回答里没有改写工单')
+        if (!text.includes('确认')) failures.push('工单没有要求用户确认——模型不得跳过确认直接写文件')
+        return failures
+      },
+    },
+  },
 ]
 
 

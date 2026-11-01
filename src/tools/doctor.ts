@@ -20,6 +20,7 @@ import { scanRoots } from '../scanner/fs-scan.js'
 import { duplicateFindingsBySkill } from '../scanner/checks/duplicates.js'
 import { filterSkills, lintSkill, lintSkills } from '../scanner/scan.js'
 import { readDshVersion } from '../version-check.js'
+import { renderRewriteBatch, renderRewriteWorksheet } from './rewrite.js'
 import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown, type ReportOptions } from './report.js'
 
 /** 病历路径的解析：`auto` 用 profile 专属的默认路径，其余按用户给的路径展开。 */
@@ -61,6 +62,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
     description: 'Diagnose DeepSeek Harness skills in one screen. With a skill name, returns a verdict (usable / model-invisible / description truncated / broken), the exact catalog entry the model sees, ranked reasons, and copyable fixes. Without a name, returns a grouped report: which skills need fixing, which descriptions get truncated, which have other warnings, and which are healthy. '
       + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
       + 'With config key `baseline` set to `auto` (recommended: the record is maintained automatically per profile) or to a file path written by the CLI via --save, the report opens with a follow-up comparison against the last checkup — what improved, what is untouched, what regressed — and the current state is stored back as the new record. '
+      + 'With `rewrite: true`, return a description-rewrite worksheet (constraints + verbatim visible/cut text + extracted triggers + a skeleton draft) instead of a diagnosis; the model fills in the copy, the user confirms before anything is written — never write the draft yourself and never skip the confirmation. '
       + 'Use this first when a skill does not appear, does not respond, or seems ignored. It never changes or executes a skill; the only file it writes is its own record JSON, and only when `baseline` is configured. '
       + 'The tool result is already a complete, user-ready Markdown report: reply with it verbatim (at most one short lead-in sentence of your own). '
       + 'Do NOT summarize it, do NOT rebuild it as your own tables, and do NOT drop sections — the prescription lines, the follow-up comparison, the calibration note and the technical appendix are part of the diagnosis, not decoration. '
@@ -71,6 +73,10 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         type: 'array',
         items: { type: 'string' },
         description: 'Additional skill roots to scan for duplicate/shadowed names (supports ~).',
+      },
+      rewrite: {
+        type: 'boolean',
+        description: 'Return a description-rewrite worksheet instead of a diagnosis: hard constraints, the verbatim visible and cut description, extracted trigger phrases and a deterministic skeleton draft. With `name`: one worksheet for that skill. Without `name`: compact worksheets for every description-truncated skill, grouped by shared name prefix (one template draft beats N per-skill drafts). The model fills in the copy, the user confirms before anything is written — this tool itself never writes.',
       },
       format: {
         type: 'string',
@@ -95,6 +101,29 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       if (args.extraRoots !== undefined && args.extraRoots.length > 0) {
         const extra = await scanRoots(args.extraRoots, config.maxFileBytes)
         skills.push(...extra.skills)
+      }
+
+      // 改写工单模式：产出材料，不做复诊读写，也不改任何状态。
+      // 工具描述里写明了：模型填稿、用户确认后才写入，本工具自身绝不写。
+      if (args.rewrite === true) {
+        if (args.name !== undefined) {
+          const skill = skills.find(item => item.name === args.name)
+          if (skill === undefined) {
+            const available = skills.slice(0, 10).map(item => item.name)
+            return [
+              `# 简介改写工单：\`${args.name}\``,
+              '',
+              '当前视图里没有这个技能，出不了工单。',
+              available.length > 0
+                ? `现在能看到的技能（前 10 个）：${available.join('、')}`
+                : '当前视图里一个技能都没有。',
+            ].join('\n')
+          }
+          const linted = await lintSkill(skill, config)
+          return renderRewriteWorksheet(linted, config.maxDescriptionLength).join('\n')
+        }
+        const linted = await lintSkills(skills, config)
+        return renderRewriteBatch(linted.results, config.maxDescriptionLength).join('\n')
       }
 
       if (args.name !== undefined) {

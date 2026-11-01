@@ -22,7 +22,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 ## Highlights
 
 - **Shows what the model actually sees.** Not "description too long", but the truncated text **verbatim** — you can tell at a glance whether your trigger words made the cut.
-- **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated.
+- **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated. Truncated descriptions get a **rewrite worksheet** (trigger skeleton + budget): the model drafts, you confirm before it is written — the loop from diagnosis to fix stays closed.
 - **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
 - **Consults across layers.** "0 skills" does not mean the skills broke — the plugin report lists every patch that touched the skill chain (who → which entry → which key), and the skill report points back at the plugin layer when it comes up empty.
 - **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
@@ -107,6 +107,8 @@ The panel reads the current session window, so **calls that scrolled out are gon
 ```
 
 Omit `name` for a full check; `extraRoots` points at directories dsh does not index (for example `~/.claude/skills`).
+
+Add `"rewrite": true` for the **rewrite worksheet** mode: without `name`, worksheets for every description-truncated skill (same-prefix skills grouped into a template — one template draft plus per-skill variable parts); with `name`, a single worksheet. A worksheet = hard constraints + verbatim visible/cut text + extracted trigger phrases + a deterministic skeleton — the model fills in the copy, **the user confirms before anything is written**, and a re-run of skill_doctor verifies the fix via the follow-up comparison.
 
 Output order is fixed: **verdict → evidence → prescription**.
 
