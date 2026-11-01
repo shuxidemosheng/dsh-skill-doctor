@@ -14,12 +14,16 @@ import {
   type BaselineDiff,
 } from '../baseline.js'
 import type { ResolvedConfig } from '../config.js'
+import type { SkillInput } from '../types.js'
 import { profileNameOf } from '../profile-name.js'
 import { collectRuntimeSkills } from '../runtime.js'
-import { scanRoots } from '../scanner/fs-scan.js'
+import { scanRoots, scanSkillFile } from '../scanner/fs-scan.js'
 import { duplicateFindingsBySkill } from '../scanner/checks/duplicates.js'
 import { filterSkills, lintSkill, lintSkills } from '../scanner/scan.js'
 import { readDshVersion } from '../version-check.js'
+import { FIXABLE_RULES, planFixes } from '../fixer/plan.js'
+import { applyFixes, type Verify } from '../fixer/apply.js'
+import { setDescription as writeDescription } from '../fixer/description.js'
 import { renderRewriteBatch, renderRewriteWorksheet } from './rewrite.js'
 import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown, type ReportOptions } from './report.js'
 
@@ -63,7 +67,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
       + 'With config key `baseline` set to `auto` (recommended: the record is maintained automatically per profile) or to a file path written by the CLI via --save, the report opens with a follow-up comparison against the last checkup — what improved, what is untouched, what regressed — and the current state is stored back as the new record. '
       + 'With `rewrite: true`, return a description-rewrite worksheet (constraints + verbatim visible/cut text + extracted triggers + a skeleton draft) instead of a diagnosis; the model fills in the copy, the user confirms before anything is written — never write the draft yourself and never skip the confirmation. '
-      + 'Use this first when a skill does not appear, does not respond, or seems ignored. It never changes or executes a skill; the only file it writes is its own record JSON, and only when `baseline` is configured. '
+      + 'Use this first when a skill does not appear, does not respond, or seems ignored. By default it only reads files; it writes in exactly three cases, each with backup and rollback: its own record JSON when `baseline` is configured, the description line when called with `setDescription` (only after the user confirmed that exact text), and byte-level BOM/CRLF when called with `fix: true`. It never rewrites semantic content on its own. '
       + 'The tool result is already a complete, user-ready Markdown report: reply with it verbatim (at most one short lead-in sentence of your own). '
       + 'Do NOT summarize it, do NOT rebuild it as your own tables, and do NOT drop sections — the prescription lines, the follow-up comparison, the calibration note and the technical appendix are part of the diagnosis, not decoration. '
       + 'Never paste it inside a code block or quote it as raw text.',
@@ -77,6 +81,14 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       rewrite: {
         type: 'boolean',
         description: 'Return a description-rewrite worksheet instead of a diagnosis: hard constraints, the verbatim visible and cut description, extracted trigger phrases and a deterministic skeleton draft. With `name`: one worksheet for that skill. Without `name`: compact worksheets for every description-truncated skill, grouped by shared name prefix (one template draft beats N per-skill drafts). The model fills in the copy, the user confirms before anything is written — this tool itself never writes.',
+      },
+      setDescription: {
+        type: 'string',
+        description: 'Write this exact text as the skill\'s description (requires `name`). Call it ONLY after the user explicitly confirmed the draft; the tool refuses multiline or over-limit text, replaces only the frontmatter description line with YAML-safe quoting, backs up to .bak, and rolls back if the re-scan does not match. It never invents or edits the copy itself.',
+      },
+      fix: {
+        type: 'boolean',
+        description: 'Apply the byte-exact fixes (BOM / CRLF only, requires `name`) to that skill file: plan, write with .bak, re-scan and roll back on any new error. Semantic problems are never touched.',
       },
       format: {
         type: 'string',
@@ -103,8 +115,8 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         skills.push(...extra.skills)
       }
 
-      // 改写工单模式：产出材料，不做复诊读写，也不改任何状态。
-      // 工具描述里写明了：模型填稿、用户确认后才写入，本工具自身绝不写。
+      // 改写工单模式：只产出材料，不写任何文件。
+      // 用户确认草稿之后，再带 setDescription 调一次才算写入。
       if (args.rewrite === true) {
         if (args.name !== undefined) {
           const skill = skills.find(item => item.name === args.name)
@@ -124,6 +136,29 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         }
         const linted = await lintSkills(skills, config)
         return renderRewriteBatch(linted.results, config.maxDescriptionLength).join('\n')
+      }
+
+      // 写入路径：默认只读，但用户确认草稿后不该逼他开终端。
+      // 两个参数都要 name，且只写“用户给的那一行”或“字节级编码修复”，见工具描述。
+      if (args.setDescription !== undefined || args.fix === true) {
+        if (args.name === undefined) {
+          return [
+            '# 写入需要指定技能',
+            '',
+            '`setDescription` 与 `fix` 都必须配合 `name` 使用——批量写技能文件风险太大，',
+            '批量修复请用 CLI：`dsh-skill-lint <root> --fix --apply`。',
+          ].join('\n')
+        }
+        const target = skills.find(item => item.name === args.name)
+        if (target === undefined) {
+          return `# 未写入：\`${args.name}\`\n\n当前视图里没有这个技能，先确认名字（区分大小写）。`
+        }
+        if (target.path === undefined) {
+          return `# 未写入：\`${args.name}\`\n\n这是 dsh 自带的虚拟技能，没有本地文件，改不了。`
+        }
+        return args.setDescription !== undefined
+          ? await writeDescriptionOutcome(target, args.setDescription, skills, config)
+          : await fixOutcome(target, config)
       }
 
       if (args.name !== undefined) {
@@ -218,4 +253,87 @@ async function saveRecord(
   } catch {
     return undefined
   }
+}
+
+/**
+ * 工具侧写 description：复用 CLI 的确定性写入（备份 / 复验 / 回滚 / 块标量拒绝）。
+ * 内容只来自调用参数——工具不生成、不改写文案。
+ */
+async function writeDescriptionOutcome(
+  skill: SkillInput,
+  draft: string,
+  skills: readonly SkillInput[],
+  config: ResolvedConfig,
+): Promise<string> {
+  const outcome = await writeDescription({
+    skillName: skill.name,
+    draft,
+    candidates: skills,
+    config,
+    apply: true,
+  })
+  const lines = [
+    outcome.status === 'applied'
+      ? `# 已写入 description：\`${outcome.skillName}\``
+      : `# 未写入：\`${outcome.skillName}\``,
+    '',
+  ]
+  if (outcome.status !== 'applied') {
+    lines.push(outcome.error ?? '写入失败（原因未知）。', '')
+    if (outcome.file.length > 0) lines.push(`目标文件：${outcome.file}`, '')
+    return lines.join('\n')
+  }
+  lines.push(
+    `- 文件：${outcome.file}`,
+    `- 长度：${outcome.beforeLength} → ${outcome.afterLength} 字（上限 ${config.maxDescriptionLength}）`,
+    '- 备份：同目录 `.bak`（内容不满足预期时可整体还原）',
+    '- 复验：重扫后 description 与草稿一致，错误数未增加',
+    '',
+    `下一步：重跑 \`skill_doctor { name: "${outcome.skillName}" }\`，复诊对比里应看到这条好转。`,
+    '',
+  )
+  return lines.join('\n')
+}
+
+/**
+ * 工具侧确定性修复：只用 planFixes 的可修规则（BOM / CRLF），并复用 CLI 同一套复验。
+ * 语义问题一律不碰——这也是 fix 参数只接受布尔值、没有“修什么”选项的原因。
+ */
+async function fixOutcome(skill: SkillInput, config: ResolvedConfig): Promise<string> {
+  const linted = await lintSkill(skill, config)
+  const plan = await planFixes([linted], FIXABLE_RULES)
+  if (plan.targets.length === 0) {
+    const why = plan.skips.length > 0
+      ? plan.skips.map(skip => `- ${skip.rule}：${skip.reason}`).join('\n')
+      : '- 没有命中可自动修的规则（只修 BOM 与 CRLF）。'
+    return [`# 没有可自动修的内容：\`${skill.name}\``, '', why, '', '语义问题只能人工改，见体检报告的处方。'].join('\n')
+  }
+
+  const errorsBefore = linted.errors
+  const verify: Verify = async target => {
+    const rescanned = await scanSkillFile(target.file, config.maxFileBytes)
+    if (rescanned === undefined) return ['修复后这个文件读不出来了']
+    const after = await lintSkill(rescanned, config)
+    const problems: string[] = []
+    const remaining = [...new Set(
+      after.findings.filter(item => item.rule === 'SD013' || item.rule === 'SD014').map(item => item.rule),
+    )]
+    if (remaining.length > 0) problems.push(`修完仍然命中 ${remaining.join('、')}`)
+    if (after.errors > errorsBefore) problems.push(`修完出现了新的错误（${errorsBefore} → ${after.errors}）`)
+    return problems
+  }
+
+  const outcomes = await applyFixes(plan.targets, verify)
+  const lines = [`# 自动修复：\`${skill.name}\``, '']
+  for (const outcome of outcomes) {
+    if (outcome.status === 'applied') {
+      lines.push(`- ✅ 已修复：${outcome.target.rules.join('、')}（备份 ${outcome.backup ?? '.bak'}）`)
+    } else if (outcome.status === 'rolled-back') {
+      lines.push(`- ⛔ 已回滚：${outcome.target.rules.join('、')} — ${outcome.problems.join('；')}`)
+    } else {
+      lines.push(`- ⛔ 未写入：${outcome.error ?? '未知原因'}`)
+    }
+  }
+  lines.push('', `下一步：重跑 \`skill_doctor { name: "${skill.name}" }\` 确认这几条已消失。`, '')
+  return lines.join('\n')
 }
