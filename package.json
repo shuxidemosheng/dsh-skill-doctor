@@ -37,7 +37,7 @@
     }
   },
   "bin": {
-    "dsh-skill-lint": "./lib/cli.js"
+    "dsh-skill-lint": "lib/cli.js"
   },
   "files": [
     "lib",
