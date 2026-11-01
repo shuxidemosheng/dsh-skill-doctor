@@ -352,13 +352,22 @@ GitHub Actions：
 | `severityThreshold` | `info` | 输出过滤级别 |
 | `includeProviders` | `[]` | 只检查这些 provider |
 | `excludeProviders` | `[]` | 跳过这些 provider |
-| `baseline` | 无 | 病历文件路径（支持 `~`）；配置后报告会带「复诊对比」 |
+| `baseline` | 无 | `auto`（推荐，按 profile 自动维护病历）或病历文件路径（支持 `~`）；配置后报告带「复诊对比」 |
 
 配置非法时插件只打一行 warn 并禁用自己，**不会阻断会话创建**。
 
 ## 病历与复诊
 
-体检一次不难，难的是知道“这次比上次好还是坏”。CLI 可以把一次体检存成病历（JSON），下次对照着看差值：
+体检一次不难，难的是知道“这次比上次好还是坏”。两种用法：
+
+**会话内全自动（推荐插件用户，不需要终端）**：在插件的 `baseline` 配置里写 `auto`，之后每次体检自动存病历、自动和上次对比——第一次建档时报告会说明，从第二次开始报告自带「复诊对比」：
+
+```yaml
+config:
+  baseline: auto    # 病历按 profile 分文件，存在 ~/.dsh/skill-doctor/ 下
+```
+
+**CLI 手动（CI / 想自己管文件）**：
 
 ```bash
 # 第一次：体检 + 存病历
@@ -388,7 +397,7 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 
 - 病历是普通 JSON，可以提交进仓库；CI 里 `--compare --json` 之后读 `comparison.regressed`，非空就挂门禁。
 - 口径要一致：病历会记下当时的 `severityThreshold` 与启用的规则集，口径不同时报告会明确提示“数字不可直接比”，而不是硬比。
-- 插件工具保持只读：`skill_doctor` 不写任何文件。想让会话里的体检也带复诊对比，把病历路径配到 `baseline`（见上表），工具只读它，读不到就跳过对比。
+- 插件工具的唯一写行为就是病历本身：`skill_doctor` 不改任何技能文件，只在配置了 `baseline` 时把体检结果写进那一份病历 JSON；读不到就跳过对比，绝不影响体检。
 
 ## 它做不到什么
 

@@ -20,7 +20,7 @@ export interface Config {
   includeProviders?: string[]
   /** 跳过这些 provider。 */
   excludeProviders?: string[]
-  /** 病历文件路径（支持 ~）；配置后 skill_doctor 会在报告里加「复诊对比」。 */
+  /** 病历文件路径（支持 ~）；配 `auto` 则由插件按 profile 自动维护（会话内全自动复诊）。 */
   baseline?: string
 }
 

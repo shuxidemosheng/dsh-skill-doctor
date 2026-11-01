@@ -3,27 +3,47 @@ import { basename } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-working-directory'
-import { currentMetaOf, diffBaseline, expandHome, loadBaseline, type BaselineDiff } from '../baseline.js'
+import {
+  autoRecordPath,
+  buildBaseline,
+  currentMetaOf,
+  diffBaseline,
+  expandHome,
+  loadBaseline,
+  saveBaseline,
+  type BaselineDiff,
+} from '../baseline.js'
 import type { ResolvedConfig } from '../config.js'
+import { profileNameOf } from '../profile-name.js'
 import { collectRuntimeSkills } from '../runtime.js'
 import { scanRoots } from '../scanner/fs-scan.js'
 import { duplicateFindingsBySkill } from '../scanner/checks/duplicates.js'
 import { filterSkills, lintSkill, lintSkills } from '../scanner/scan.js'
 import { readDshVersion } from '../version-check.js'
-import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown } from './report.js'
+import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown, type ReportOptions } from './report.js'
+
+/** 病历路径的解析：`auto` 用 profile 专属的默认路径，其余按用户给的路径展开。 */
+function recordPathOf(config: ResolvedConfig, ctx: Context): string | undefined {
+  if (config.baseline === undefined) return undefined
+  return config.baseline === 'auto'
+    ? autoRecordPath(profileNameOf(ctx) ?? 'default')
+    : expandHome(config.baseline)
+}
 
 /**
- * 读病历并算出复诊差值；任何失败都降级为「没有对比」，不影响体检本身。
- * @returns diff 与展示标签；读不到病历时返回 missing 提示。
+ * 病历读侧：读旧病历并算出复诊差值；任何失败都降级为「没有对比」，不影响体检本身。
+ * @returns diff 与展示标签；配了病历但读不到时返回 missing 提示。
  */
 async function followUp(
   config: ResolvedConfig,
+  path: string,
   result: Awaited<ReturnType<typeof lintSkills>>,
-): Promise<{ diff?: BaselineDiff; label?: string; missing?: string }> {
-  if (config.baseline === undefined) return {}
-  const path = expandHome(config.baseline)
+): Promise<{ diff?: BaselineDiff; label?: string; missing?: string; firstRecord?: boolean }> {
   const baseline = await loadBaseline(path)
-  if (baseline === undefined) return { missing: path }
+  // auto 模式下第一次跑没有旧病历：不是异常，是"第一次建档"，渲染时要说明白。
+  if (baseline === undefined) {
+    return config.baseline === 'auto' ? { firstRecord: true } : { missing: path }
+  }
   return {
     diff: diffBaseline(baseline, result, currentMetaOf(config)),
     label: `\`${basename(path)}\`（${baseline.savedAt.slice(0, 10)} 存档）`,
@@ -40,8 +60,8 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
     name: 'skill_doctor',
     description: 'Diagnose DeepSeek Harness skills in one screen. With a skill name, returns a verdict (usable / model-invisible / description truncated / broken), the exact catalog entry the model sees, ranked reasons, and copyable fixes. Without a name, returns a grouped report: which skills need fixing, which descriptions get truncated, which have other warnings, and which are healthy. '
       + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
-      + 'If a baseline record (saved once by the CLI via --save) is configured under config key `baseline`, the report opens with a follow-up comparison against it: what improved, what is untouched, what regressed. '
-      + 'Use this first when a skill does not appear, does not respond, or seems ignored. It only reads files and never changes or executes a skill. '
+      + 'With config key `baseline` set to `auto` (recommended: the record is maintained automatically per profile) or to a file path written by the CLI via --save, the report opens with a follow-up comparison against the last checkup — what improved, what is untouched, what regressed — and the current state is stored back as the new record. '
+      + 'Use this first when a skill does not appear, does not respond, or seems ignored. It never changes or executes a skill; the only file it writes is its own record JSON, and only when `baseline` is configured. '
       + 'The tool result is already a complete, user-ready Markdown report: reply with it verbatim (at most one short lead-in sentence of your own). '
       + 'Do NOT summarize it, do NOT rebuild it as your own tables, and do NOT drop sections — the prescription lines, the follow-up comparison, the calibration note and the technical appendix are part of the diagnosis, not decoration. '
       + 'Never paste it inside a code block or quote it as raw text.',
@@ -122,14 +142,51 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       }
 
       const result = await lintSkills(skills, config)
+      const recordPath = recordPathOf(config, ctx)
+      // 命令式构建而不是对象字面量里连续 async spread：
+      // esbuild 对 `...(cond ? {} : await f())` 后跟另一个 async spread 的降级
+      // 曾把先展开的键丢掉（tsc 产物正常、vitest 里丢失），不赌这个。
+      type Writable<T> = { -readonly [K in keyof T]: T[K] }
       const reportOptions = {
         maxDescriptionLength: config.maxDescriptionLength,
         dshVersion: await readDshVersion(),
-        ...await followUp(config, result),
+      } as Writable<ReportOptions>
+      if (recordPath !== undefined) {
+        const follow = await followUp(config, recordPath, result)
+        if (follow.diff !== undefined && follow.label !== undefined) {
+          reportOptions.baselineDiff = follow.diff
+          reportOptions.baselineLabel = follow.label
+        } else if (follow.missing !== undefined) {
+          reportOptions.baselineMissing = follow.missing
+        } else if (follow.firstRecord === true) {
+          reportOptions.baselineFirstRecord = true
+        }
+        // 医生每次问诊都会更新病历：本次体检完，把新状态写回同一路径。
+        // 写失败只降级成提示（下次对比的还是旧病历），绝不让体检本身失败。
+        const saved = await saveRecord(recordPath, config, result)
+        if (saved !== undefined) reportOptions.recordSaved = saved
       }
       return args.format === 'json'
         ? renderLintJson(result, reportOptions)
         : renderLintMarkdown(result, reportOptions)
     },
   })
+}
+
+/**
+ * 把本次体检写回病历文件；失败返回 undefined（不抛）。
+ * 只写这一份我们生成的 JSON，路径来自用户显式配置（`baseline`）——
+ * 技能文件本身依然一个字节都不碰。
+ */
+async function saveRecord(
+  path: string,
+  config: ResolvedConfig,
+  result: Awaited<ReturnType<typeof lintSkills>>,
+): Promise<string | undefined> {
+  try {
+    await saveBaseline(path, buildBaseline(result, currentMetaOf(config)))
+    return path
+  } catch {
+    return undefined
+  }
 }

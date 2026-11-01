@@ -254,13 +254,22 @@ Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usag
 | `severityThreshold` | `info` | Output filter |
 | `includeProviders` | `[]` | Only these providers |
 | `excludeProviders` | `[]` | Skip these providers |
-| `baseline` | none | Path to a record file (supports `~`); when set, reports include a follow-up comparison |
+| `baseline` | none | `auto` (recommended: the record is maintained per profile) or a record file path (supports `~`); when set, reports include a follow-up comparison |
 
 Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
 
 ## Record & follow-up
 
-One checkup is easy; knowing whether this run is better than the last one is not. The CLI can save a scan as a record (JSON) and diff the next run against it:
+One checkup is easy; knowing whether this run is better than the last one is not. Two ways:
+
+**Fully automatic in-session (recommended for plugin users, no terminal needed)**: set `baseline: auto` in the plugin config; every checkup then stores the record and diffs against the previous one automatically. The first run archives ("first record"), from the second on the report carries the follow-up comparison:
+
+```yaml
+config:
+  baseline: auto    # one record file per profile, under ~/.dsh/skill-doctor/
+```
+
+**Manual via CLI (CI / you own the file)**:
 
 ```bash
 # First run: check and save the record
@@ -290,7 +299,7 @@ Overall: 5 → 3 findings.
 
 - The record is plain JSON and can be committed; in CI, run `--compare --json` and gate on a non-empty `comparison.regressed`.
 - Keep the same measuring stick: the record stores the `severityThreshold` and enabled rules it was saved with; on mismatch the report says the numbers are not directly comparable instead of silently diffing.
-- The plugin tools stay read-only: `skill_doctor` never writes. To get the follow-up comparison inside a session, point config `baseline` (table above) at the record; it is only read, and comparison is skipped when unreadable.
+- The plugin's only write behavior is the record itself: `skill_doctor` never touches skill files; with `baseline` configured it writes the checkup result into that one record JSON, and skips the comparison when the record is unreadable.
 
 ## Limits
 

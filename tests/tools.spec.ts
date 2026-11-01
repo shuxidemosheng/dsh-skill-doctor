@@ -1,7 +1,13 @@
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { autoRecordPath } from '../src/baseline'
+import { resolveConfig } from '../src/config'
 import { apply } from '../src/index'
+import { buildDoctorTool } from '../src/tools/doctor'
 import type { SkillInput } from '../src/types'
-import { callTool, createFakeCtx, FIXTURES, loadFixture } from './helpers'
+import { callTool, createFakeCtx, fakeExec, FIXTURES, loadFixture } from './helpers'
 import type { FakeEntry } from './helpers'
 
 /** 第一屏 = 技术细节之前的部分；验收要求它不出现规则 ID 和技术字段。 */
@@ -188,6 +194,46 @@ describe('skill_doctor', () => {
     expect(output).toMatch(/没有找到技能/)
     expect(output).toContain('插件层')
     expect(output).toContain('plugin_doctor')
+  })
+
+  it('auto-maintains the record: first call archives, second call compares', async () => {
+    // 复诊必须在会话内闭环，不能逼用户开终端跑 CLI --save。
+    // fake ctx 没有 profileContext → 病历落到 record-default.json；用临时 DSH_HOME 隔离。
+    const home = mkdtempSync(join(tmpdir(), 'auto-record-'))
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      const skill = await loadFixture('good-skill')
+      const env = createFakeCtx([{ skill }])
+      const tool = buildDoctorTool(env.ctx as never, resolveConfig({ baseline: 'auto' }))
+
+      const first = String(await tool.execute({}, fakeExec()))
+      expect(first).toContain('第一次记录病历')
+      // 病历真的写出来了，且内容是本次体检的快照。
+      const recordPath = autoRecordPath('default')
+      const onDisk = JSON.parse(readFileSync(recordPath, 'utf8')) as {
+        skills: Record<string, unknown>
+      }
+      expect(Object.keys(onDisk.skills)).toContain(skill.name)
+
+      const second = String(await tool.execute({}, fakeExec()))
+      expect(second).toContain('## 复诊对比')
+      expect(second).toContain('已存为新病历')
+
+      // 技能变差后再体检：差值要反映出来，而不是永远"和上次一样"。
+      // 注意：带磁盘路径的运行时技能会被真实文件内容合并，伪造 snapshot 里的
+      // description 无效（lint 读的是合并后的）；所以用真实的坏 fixture 制造回归。
+      const broken = await loadFixture('bad-frontmatter')
+      const env2 = createFakeCtx([{ skill: broken }])
+      const tool2 = buildDoctorTool(env2.ctx as never, resolveConfig({ baseline: 'auto' }))
+      const third = String(await tool2.execute({}, fakeExec()))
+      expect(third).toContain('⚠️ 变差')
+      expect(third).toContain('🆕 这次新扫到：`bad-frontmatter`')
+    } finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 
   it('reports duplicate names in single-skill mode when extraRoots is given', async () => {

@@ -35,6 +35,10 @@ export interface ReportOptions {
   readonly baselineLabel?: string
   /** 配置了病历但读不到时的提示路径；放技术细节里，不打断正文。 */
   readonly baselineMissing?: string
+  /** auto 模式第一次建档：这次没有对比，但下次就有了。 */
+  readonly baselineFirstRecord?: boolean
+  /** 本次体检已写回的病历路径；写失败则没有这个字段。 */
+  readonly recordSaved?: string
 }
 
 function limitOf(options: ReportOptions): number {
@@ -562,6 +566,25 @@ function followUpSection(diff: BaselineDiff, label: string): string[] {
 }
 
 /**
+ * 病历回执（复诊章节之外的状态行）：
+ * - 第一次建档：解释"这次为什么没有对比"；
+ * - 日常体检：告知病历已更新，下次对比用的是这份新档。
+ * 放在复诊章节后面一句话，不单独开章节——它是收据，不是诊断。
+ */
+function recordSection(options: ReportOptions): string[] {
+  if (options.baselineFirstRecord === true) {
+    return [
+      '> 📋 这次是第一次记录病历：从下次体检开始，报告会自动带上和这次的复诊对比。',
+      '',
+    ]
+  }
+  if (options.recordSaved !== undefined) {
+    return [`> 📋 本次体检结果已存为新病历 \`${options.recordSaved}\`，下次体检会自动和它对比。`, '']
+  }
+  return []
+}
+
+/**
  * 多技能报告（通俗风格）。
  *
  * 30 个技能不能变成 30 段规则文本，所以这里只做三件事：
@@ -621,6 +644,12 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
   // 复诊对比紧跟体检分布：刚修完的人第一眼想看的是“好了多少”。
   if (options.baselineDiff !== undefined && options.baselineLabel !== undefined) {
     lines.push(...followUpSection(options.baselineDiff, options.baselineLabel))
+    // 对比之后告知病历已更新：下次的“上次”就是这一次。
+    if (options.recordSaved !== undefined) {
+      lines.push(`> 📋 本次体检结果已存为新病历 \`${options.recordSaved}\`。`, '')
+    }
+  } else if (options.baselineFirstRecord === true || options.recordSaved !== undefined) {
+    lines.push(...recordSection(options))
   }
 
   // 共性问题放在逐个展开之前：先让人知道“13 个超长其实是一个模板问题”，
@@ -746,6 +775,7 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
       },
     },
     ...options.dshVersion === undefined ? {} : { calibration: options.dshVersion },
+    ...options.recordSaved === undefined ? {} : { recordSaved: options.recordSaved },
     results: result.results.map(skill => ({
       name: skill.skill.name,
       provider: skill.skill.provider,

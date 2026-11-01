@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  autoRecordPath,
   buildBaseline,
   currentMetaOf,
   diffBaseline,
@@ -63,6 +64,22 @@ describe('expandHome', () => {
     expect(expandHome('~/records/baseline.json')).not.toContain('~')
     expect(expandHome('D:/skills/baseline.json')).toBe('D:/skills/baseline.json')
     expect(expandHome('~another')).toBe('~another')
+  })
+})
+
+describe('autoRecordPath', () => {
+  it('is per-profile inside $DSH_HOME so desktop and headless records never mix', () => {
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = 'D:/fake-dsh-home'
+    try {
+      const desktop = autoRecordPath('desktop')
+      expect(desktop).toContain('skill-doctor')
+      expect(desktop).toContain('record-desktop.json')
+      expect(autoRecordPath('headless')).not.toBe(desktop)
+    } finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+    }
   })
 })
 
@@ -220,5 +237,29 @@ describe('report: follow-up section', () => {
   it('does not render the section without a baseline', () => {
     expect(renderLintMarkdown(after)).not.toContain('复诊对比')
     expect(renderLintJson(after) as unknown as { comparison?: unknown }).not.toHaveProperty('comparison')
+  })
+
+  it('explains the first auto-record instead of showing a confusing empty comparison', () => {
+    // auto 模式第一次跑没有旧病历：不是异常，要说清“下次开始有对比”。
+    const markdown = renderLintMarkdown(after, { baselineFirstRecord: true })
+    expect(markdown).toContain('第一次记录病历')
+    expect(markdown).toContain('下次体检开始')
+    // 没有旧病历就没有对比章节本身（只允许提示文案里提到这四个字）。
+    expect(markdown).not.toContain('## 复诊对比')
+  })
+
+  it('acknowledges the stored record so the user knows the next diff is against it', () => {
+    const markdown = renderLintMarkdown(after, { recordSaved: 'D:/records/auto.json' })
+    expect(markdown).toContain('已存为新病历')
+    expect(markdown).toContain('D:/records/auto.json')
+    const withDiff = renderLintMarkdown(after, {
+      baselineDiff: diff,
+      baselineLabel: '`record.json`（2026-10-31 存档）',
+      recordSaved: 'D:/records/auto.json',
+    })
+    // 有对比时回执跟在对比后面，两件事都在。
+    expect(withDiff).toContain('复诊对比')
+    expect(withDiff).toContain('已存为新病历')
+    expect((JSON.parse(renderLintJson(after, { recordSaved: 'x' })) as { recordSaved: string }).recordSaved).toBe('x')
   })
 })
