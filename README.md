@@ -402,6 +402,7 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 - 病历是普通 JSON，可以提交进仓库；CI 里 `--compare --json` 之后读 `comparison.regressed`，非空就挂门禁。
 - 口径要一致：病历会记下当时的 `severityThreshold` 与启用的规则集，口径不同时报告会明确提示“数字不可直接比”，而不是硬比。
 - 插件工具的唯一写行为就是病历本身：`skill_doctor` 不改任何技能文件，只在配置了 `baseline` 时把体检结果写进那一份病历 JSON；读不到就跳过对比，绝不影响体检。
+- **确认后的写入有一条确定性命令**：`dsh-skill-lint --set-description <技能名> --from <草稿文件>`（加 `--apply` 才落盘）。它只替换 frontmatter 里 description 那一行（YAML 安全转义、保留其余内容与换行符），写前备份 `.bak`、写后复验失败自动回滚——不用让模型手改 frontmatter，也没有转义事故。
 
 ## 它做不到什么
 

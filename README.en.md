@@ -304,6 +304,7 @@ Overall: 5 → 3 findings.
 - The record is plain JSON and can be committed; in CI, run `--compare --json` and gate on a non-empty `comparison.regressed`.
 - Keep the same measuring stick: the record stores the `severityThreshold` and enabled rules it was saved with; on mismatch the report says the numbers are not directly comparable instead of silently diffing.
 - The plugin's only write behavior is the record itself: `skill_doctor` never touches skill files; with `baseline` configured it writes the checkup result into that one record JSON, and skips the comparison when the record is unreadable.
+- **Applying a confirmed draft has a deterministic command**: `dsh-skill-lint --set-description <skill> --from <draft-file>` (add `--apply` to write). It replaces only the description line in the frontmatter (YAML-safe escaping, everything else byte-preserved including line endings), backs up to `.bak`, and rolls back automatically if post-write verification fails — no hand-editing frontmatter, no escaping accidents.
 
 ## Limits
 

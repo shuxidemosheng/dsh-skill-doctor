@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /** dsh-skill-lint：不依赖 dsh 运行时的技能 lint CLI，供技能作者与 CI 使用。 */
 import { basename } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import {
   buildBaseline,
   currentMetaOf,
@@ -17,6 +19,7 @@ import { renderLintJson, renderLintMarkdown } from './tools/report.js'
 import { renderPluginJson, renderPluginMarkdown } from './plugins/report.js'
 import { scanProfile } from './plugins/scan.js'
 import { applyFixes, type FixOutcome, type Verify } from './fixer/apply.js'
+import { setDescription } from './fixer/description.js'
 import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
 import { renderFixJson, renderFixMarkdown, type UnfixableHit } from './fixer/report.js'
 import { readDshVersion } from './version-check.js'
@@ -41,6 +44,8 @@ interface CliOptions {
   readonly only?: FixableRule[]
   readonly save?: string
   readonly compare?: string
+  readonly setDescription?: string
+  readonly from?: string
 }
 
 function fail(message: string): never {
@@ -71,6 +76,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let apply = false
   let save: string | undefined
   let compare: string | undefined
+  let setDescriptionTarget: string | undefined
+  let from: string | undefined
   const only: FixableRule[] = []
 
   for (let i = 0; i < argv.length; i++) {
@@ -92,6 +99,18 @@ function parseArgs(argv: readonly string[]): CliOptions {
         const value = argv[++i]
         if (value === undefined || value.trim().length === 0) fail('--compare requires a file path')
         compare = value.trim()
+        break
+      }
+      case '--set-description': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--set-description requires a skill name')
+        setDescriptionTarget = value.trim()
+        break
+      }
+      case '--from': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--from requires a file path')
+        from = value.trim()
         break
       }
       case '--only': {
@@ -136,9 +155,13 @@ function parseArgs(argv: readonly string[]): CliOptions {
   }
 
   // --apply 单独出现是没意义的，也最可能是手滑；直接拒绝比“静默什么都做”好。
-  if (apply && !fix) fail('--apply only makes sense together with --fix')
+  // 但 --set-description 是合法的写路径：内容来自用户确认过的草稿，--apply 才落盘。
+  if (apply && !fix && setDescriptionTarget === undefined) fail('--apply only makes sense together with --fix or --set-description')
   // --save 存的是“这次体检”的快照；--fix 会当场改文件，存下来的就是旧状态了。
   if (save !== undefined && fix) fail('--save cannot be used together with --fix')
+  // 两个写路径互斥：一个改 BOM/CRLF，一个改 description，混在一起没法判断意图。
+  if (setDescriptionTarget !== undefined && fix) fail('--set-description cannot be used together with --fix')
+  if (setDescriptionTarget !== undefined && save !== undefined) fail('--set-description cannot be used together with --save')
 
   return {
     paths: paths.length === 0 ? ['.'] : paths,
@@ -155,6 +178,8 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...only.length === 0 ? {} : { only },
     ...save === undefined ? {} : { save },
     ...compare === undefined ? {} : { compare },
+    ...setDescriptionTarget === undefined ? {} : { setDescription: setDescriptionTarget },
+    ...from === undefined ? {} : { from },
     help,
     version,
   }
@@ -185,6 +210,10 @@ function usage(): string {
     'Follow-up options (medical record / re-examination):',
     '  --save <file>          save this scan as a baseline (medical record) for later comparison',
     '  --compare <file>       compare this scan against a baseline; adds a follow-up section',
+    '',
+    'Description writing (applies a user-confirmed draft; plan only until --apply):',
+    '  --set-description <n>  write a new description into skill <n> (single line, within limit)',
+    '  --from <file>          the new description comes from this UTF-8 file (or stdin)',
     '',
     '  --help, -h             show this help',
     '  --version, -v          show version',
@@ -315,6 +344,35 @@ async function main(): Promise<void> {
 
   const effective = withRuleFilter(config, options.rules, options.severity)
   const result = await lintSkills(scan.skills, effective)
+
+  if (options.setDescription !== undefined) {
+    const draft = options.from !== undefined
+      ? readFile(options.from, 'utf8')
+      : Promise.resolve(readFileSync(0, 'utf8'))
+    const text = (await draft).replace(/^\uFEFF/, '')
+    const outcome = await setDescription({
+      skillName: options.setDescription,
+      draft: text,
+      candidates: scan.skills,
+      config,
+      apply: options.apply,
+    })
+    process.stdout.write(`${options.json ? JSON.stringify(outcome, null, 2) : [
+      `# 写入 description：\`${outcome.skillName}\``,
+      '',
+      outcome.status === 'planned'
+        ? '状态：**计划（未写入）**——确认无误后加 `--apply` 执行。'
+        : outcome.status === 'applied'
+          ? '状态：✅ **已写入**（原文件备份在 .bak）。'
+          : `状态：⛔ ${outcome.error}`,
+      `文件：${outcome.file}`,
+      `长度：${outcome.beforeLength} → ${outcome.afterLength} 字（上限 ${config.maxDescriptionLength}）`,
+      '',
+      '写完后重跑体检：复诊对比里会显示这次修复。',
+    ].join('\n')}\n`)
+    process.exitCode = outcome.status === 'failed' ? 2 : 0
+    return
+  }
 
   if (options.fix) {
     await runFix(options, result, config, effective)
