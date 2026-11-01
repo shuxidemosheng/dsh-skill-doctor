@@ -131,8 +131,10 @@ export const CASES = [
   {
     id: 'A8',
     group: 'A',
-    title: '展示形态：模型应把报告按 Markdown 展示，而不是塞进代码块',
-    // 用户真实用法：让模型“展示给我看”，不希望看到一堆 ``` 包着的原始 Markdown。
+    title: '展示形态：报告章节必须原样存活，不许模型私自摘编',
+    // 两代缺陷：①早期报告被 ``` 包成原始文本；②0.7.0 实测模型把报告重新摘编成
+    // 自己的表格，处方/校准/技术细节全被丢掉——工具结果本来就是完整报告，
+    // 要求原样透传。这里断言关键章节存活 + 无围栏。
     task: '用 skill_doctor 查一下 nature-citation，然后把体检报告直接展示给我看。',
     setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
     expect: {
@@ -143,6 +145,12 @@ export const CASES = [
         const failures = []
         if (text.includes('```')) failures.push('最终回答里出现了代码块围栏（```），报告被当成原始文本贴出来了')
         if (!text.includes('结论')) failures.push('最终回答里没有结论段')
+        // 摘编检测：报告的二级标题是报告骨架，模型自己重写表格时一定会丢。
+        // 单技能报告固定有 4 个二级标题（模型看到的信息/被切掉的部分/需要处理的问题/技术细节）。
+        const headings = [...text.matchAll(/^## .+$/gm)].length
+        if (headings < 3) failures.push(`最终回答只有 ${headings} 个二级标题，报告章节被模型摘编掉了（应原样透传）`)
+        if (!text.includes('技术细节')) failures.push('「技术细节」章节丢失：模型没有原样透传报告')
+        if (!text.includes('模型看到的信息')) failures.push('「模型看到的信息」章节丢失：模型没有原样透传报告')
         return failures
       },
     },
@@ -354,6 +362,24 @@ export const CASES = [
     task: '帮我看看 nature-citation 这个技能，为什么模型好像老是不主动用它？用技能体检工具查一下。',
     setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
     expect: { exitCode: 0, tool: 'skill_doctor' },
+  },
+  {
+    id: 'D4',
+    group: 'D',
+    title: '可用性：改写工单——诊断之后直接给改写材料，不越权写文件',
+    task: 'nature-citation 的简介太长了，用技能体检工具的改写模式给我出一份改写工单。',
+    setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
+    expect: {
+      exitCode: 0,
+      tool: 'skill_doctor',
+      custom: async ({ finalText }) => {
+        const text = String(finalText ?? '')
+        const failures = []
+        if (!text.includes('改写工单')) failures.push('最终回答里没有改写工单')
+        if (!text.includes('确认')) failures.push('工单没有要求用户确认——模型不得跳过确认直接写文件')
+        return failures
+      },
+    },
   },
 ]
 

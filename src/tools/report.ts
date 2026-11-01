@@ -35,6 +35,10 @@ export interface ReportOptions {
   readonly baselineLabel?: string
   /** 配置了病历但读不到时的提示路径；放技术细节里，不打断正文。 */
   readonly baselineMissing?: string
+  /** auto 模式第一次建档：这次没有对比，但下次就有了。 */
+  readonly baselineFirstRecord?: boolean
+  /** 本次体检已写回的病历路径；写失败则没有这个字段。 */
+  readonly recordSaved?: string
 }
 
 function limitOf(options: ReportOptions): number {
@@ -49,7 +53,7 @@ function findingLine(finding: Finding, detailed: boolean): string[] {
 }
 
 /** 描述被截断时的影响评估。 */
-interface TruncationInfo {
+export interface TruncationInfo {
   readonly level: 'none' | 'low' | 'high'
   readonly cutLength: number
   readonly newTriggers: readonly string[]
@@ -69,7 +73,7 @@ function shortTrigger(value: string, max = 80): string {
  * 抽取出来的是整句（"Use when ..." / "Trigger on ..."），直接展示会很啰嗦，
  * 这里去掉开头的引导词、截到第一个逗号或句号，只留用户真正会说的那半句。
  */
-function triggerLabel(trigger: string, max = 40): string {
+export function triggerLabel(trigger: string, max = 40): string {
   const stripped = trigger
     .replace(/^(?:use when|use for|use this skill|triggers?(?:\s+on)?|when the user|used?\s+for|用于|当用户|适用于|适用|触发)\s*[:：]?\s*/i, '')
     .replace(/\s+/g, ' ')
@@ -79,7 +83,7 @@ function triggerLabel(trigger: string, max = 40): string {
 }
 
 /** 把多行文本压成一行，便于放在引用块里显示。 */
-function oneLine(text: string): string {
+export function oneLine(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
@@ -95,7 +99,7 @@ function preview(text: string, max = 300): string {
  * 直接 slice(limit) 常常从半个单词开始（例如 "e text-to-reference"），
  * 这里把落点推到下一个空白，读起来才像正常文字。
  */
-function cutPreview(description: string, limit: number, max = 220): string {
+export function cutPreview(description: string, limit: number, max = 220): string {
   const cut = description.slice(limit)
   const firstSpace = cut.search(/\s/)
   const boundary = description.slice(limit - 1, limit + 1)
@@ -104,7 +108,7 @@ function cutPreview(description: string, limit: number, max = 220): string {
 }
 
 /** 从一段描述里提取“触发词/触发句”：引号短语 + Use when/用于 等标记句。 */
-function extractTriggers(text: string): string[] {
+export function extractTriggers(text: string): string[] {
   const quoted = [...text.matchAll(/["“「']([^"”」']{2,60})["”」']/g)]
     .map(match => match[1] ?? '')
   const markers: string[] = []
@@ -118,7 +122,7 @@ function extractTriggers(text: string): string[] {
   return unique([...quoted, ...markers]).slice(0, 8)
 }
 
-function analyzeTruncation(description: string, limit: number): TruncationInfo {
+export function analyzeTruncation(description: string, limit: number): TruncationInfo {
   if (description.length <= limit) return { level: 'none', cutLength: 0, newTriggers: [] }
   const visible = description.slice(0, limit)
   const cut = description.slice(limit)
@@ -562,6 +566,25 @@ function followUpSection(diff: BaselineDiff, label: string): string[] {
 }
 
 /**
+ * 病历回执（复诊章节之外的状态行）：
+ * - 第一次建档：解释"这次为什么没有对比"；
+ * - 日常体检：告知病历已更新，下次对比用的是这份新档。
+ * 放在复诊章节后面一句话，不单独开章节——它是收据，不是诊断。
+ */
+function recordSection(options: ReportOptions): string[] {
+  if (options.baselineFirstRecord === true) {
+    return [
+      '> 📋 这次是第一次记录病历：从下次体检开始，报告会自动带上和这次的复诊对比。',
+      '',
+    ]
+  }
+  if (options.recordSaved !== undefined) {
+    return [`> 📋 本次体检结果已存为新病历 \`${options.recordSaved}\`，下次体检会自动和它对比。`, '']
+  }
+  return []
+}
+
+/**
  * 多技能报告（通俗风格）。
  *
  * 30 个技能不能变成 30 段规则文本，所以这里只做三件事：
@@ -576,6 +599,11 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
       '# Skill Doctor：技能体检报告',
       '',
       '没有找到技能。确认一下工作目录，或者把技能目录加到 `extraRoots`。',
+      '',
+      '还有一个常见原因在**插件层**：某个插件的 patch 把技能目录改了或关了，',
+      '症状同样是"一个技能都看不到"，但技能文件本身没有任何问题。',
+      '让模型调一次 `plugin_doctor`（或跑 `dsh-skill-lint --plugins`）做会诊，',
+      '它的「会诊」章节会列出所有动了技能链路的插件层改动。',
     ].join('\n')
   }
 
@@ -616,6 +644,12 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
   // 复诊对比紧跟体检分布：刚修完的人第一眼想看的是“好了多少”。
   if (options.baselineDiff !== undefined && options.baselineLabel !== undefined) {
     lines.push(...followUpSection(options.baselineDiff, options.baselineLabel))
+    // 对比之后告知病历已更新：下次的“上次”就是这一次。
+    if (options.recordSaved !== undefined) {
+      lines.push(`> 📋 本次体检结果已存为新病历 \`${options.recordSaved}\`。`, '')
+    }
+  } else if (options.baselineFirstRecord === true || options.recordSaved !== undefined) {
+    lines.push(...recordSection(options))
   }
 
   // 共性问题放在逐个展开之前：先让人知道“13 个超长其实是一个模板问题”，
@@ -741,6 +775,7 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
       },
     },
     ...options.dshVersion === undefined ? {} : { calibration: options.dshVersion },
+    ...options.recordSaved === undefined ? {} : { recordSaved: options.recordSaved },
     results: result.results.map(skill => ({
       name: skill.skill.name,
       provider: skill.skill.provider,

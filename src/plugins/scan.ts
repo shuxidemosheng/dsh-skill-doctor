@@ -15,6 +15,16 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
+/** 一条已解析 patch 里、与“技能链路”相关的配置改动。 */
+export interface SkillTouchpoint {
+  /** 被改动的 loader 条目 id（如 `skill-filesystem`）。 */
+  readonly entryId: string
+  /** 被改动的配置键。 */
+  readonly key: string
+  /** 人话化的值（JSON 形式，超长截断）。 */
+  readonly value: string
+}
+
 /** 一个已安装插件的摘要。 */
 export interface BundleInfo {
   readonly name: string
@@ -30,13 +40,15 @@ export interface BundleInfo {
   readonly inserts: readonly string[]
   /** 它的 patch 修改（而非新增）的 loader 条目 id。 */
   readonly patches: readonly string[]
+  /** 它的 patch 里触碰“技能链路”的配置改动（会诊用）。 */
+  readonly skillTouchpoints: readonly SkillTouchpoint[]
   /** 读文件失败时的原因，用于报告里解释“为什么这个插件没被检查”。 */
   readonly note?: string
 }
 
 /** 一条冲突。 */
 export interface PluginConflict {
-  readonly rule: 'PL001' | 'PL002' | 'PL003' | 'PL004' | 'PL005'
+  readonly rule: 'PL001' | 'PL002' | 'PL003' | 'PL004' | 'PL005' | 'PL006'
   readonly severity: 'error' | 'warn' | 'info'
   /** 人话标题，第一屏直接显示。 */
   readonly title: string
@@ -63,6 +75,7 @@ const RULE_TITLES = {
   PL003: '两个插件改同一行配置',
   PL004: '插件装了但没启用 / 启用了但包不在',
   PL005: '同一个包存在多个副本',
+  PL006: '插件动了技能链路配置',
 } as const
 
 /** dsh 的 HOME：环境变量优先，其次 ~/.dsh。 */
@@ -128,6 +141,69 @@ export function parsePatchIds(source: string): { inserts: string[]; patches: str
   return { inserts, patches }
 }
 
+/** 会关心的技能链路配置键：改动它们会直接改变“会话里能看到哪些技能”。 */
+const SKILL_CONFIG_KEYS = ['includeDefaultRoots', 'customSkillDirs'] as const
+
+/** 条目 id 含 `skill` 就当成技能链路（skill-filesystem / skill-doctor / 未来其他来源）。 */
+function isSkillEntry(id: string): boolean {
+  return id.toLowerCase().includes('skill')
+}
+
+/** 值转成人话：数组/对象用 JSON，超长截断，报告里放得下。 */
+function formatValue(value: unknown): string {
+  const text = typeof value === 'string' ? value : JSON.stringify(value)
+  const flat = text ?? String(value)
+  return flat.length > 120 ? `${flat.slice(0, 120)}…` : flat
+}
+
+/**
+ * 从 patch 里提取“触碰技能链路”的配置改动（会诊素材）。
+ *
+ * 为什么要单独解析一遍（而不是复用 parsePatchIds）：结构性冲突只关心条目 id，
+ * 会诊关心的是**具体改了哪个键、改成了什么**——同一个条目，改 maxDescriptionLength
+ * 无关紧要，改 includeDefaultRoots 会让整个技能目录消失。
+ * 解析失败返回空数组，和 parsePatchIds 一样不抛。
+ */
+export function parseSkillTouchpoints(source: string): SkillTouchpoint[] {
+  let list: unknown
+  try {
+    list = parseYaml(source)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(list)) return []
+
+  const touchpoints: SkillTouchpoint[] = []
+  const visit = (entryId: string, record: Record<string, unknown>): void => {
+    if (!isSkillEntry(entryId)) return
+    // 整个条目被禁用：这个条目提供的技能来源会从会话里消失。
+    if (record.disabled === true) {
+      touchpoints.push({ entryId, key: 'disabled', value: 'true' })
+    }
+    const config = record.config
+    if (config === null || typeof config !== 'object' || Array.isArray(config)) return
+    for (const key of SKILL_CONFIG_KEYS) {
+      const value = (config as Record<string, unknown>)[key]
+      if (value !== undefined) touchpoints.push({ entryId, key, value: formatValue(value) })
+    }
+  }
+
+  for (const entry of list) {
+    if (entry === null || typeof entry !== 'object') continue
+    const record = entry as Record<string, unknown>
+    if (Array.isArray(record.insert)) {
+      for (const child of record.insert) {
+        if (child === null || typeof child !== 'object') continue
+        const id = (child as Record<string, unknown>).id
+        if (typeof id === 'string' && id.length > 0) visit(id, child as Record<string, unknown>)
+      }
+      continue
+    }
+    if (typeof record.id === 'string' && record.id.length > 0) visit(record.id, record)
+  }
+  return touchpoints
+}
+
 /** 读一个插件的清单与 patch。 */
 async function readBundle(profileDir: string, name: string, source: string | undefined, orderedTimes: number): Promise<BundleInfo> {
   const dir = join(profileDir, 'node_modules', name)
@@ -143,6 +219,7 @@ async function readBundle(profileDir: string, name: string, source: string | und
       availability: shipped ? 'shipped' : 'missing',
       inserts: [],
       patches: [],
+      skillTouchpoints: [],
       note: shipped
         ? 'dsh 自带，包在应用内，读不到它的 patch，无法参与条目冲突分析'
         : 'node_modules 里找不到这个包',
@@ -153,6 +230,7 @@ async function readBundle(profileDir: string, name: string, source: string | und
   const patchRelative = typeof bundle?.patch === 'string' ? bundle.patch : './cordis.patch.yml'
   const patchText = await readText(join(dir, patchRelative))
   const ids = patchText === undefined ? { inserts: [], patches: [] } : parsePatchIds(patchText)
+  const skillTouchpoints = patchText === undefined ? [] : parseSkillTouchpoints(patchText)
   return {
     name,
     ...typeof manifest.version === 'string' ? { version: manifest.version } : {},
@@ -162,6 +240,7 @@ async function readBundle(profileDir: string, name: string, source: string | und
     ...typeof manifest.description === 'string' ? { description: manifest.description } : {},
     inserts: ids.inserts,
     patches: ids.patches,
+    skillTouchpoints,
     ...patchText === undefined ? { note: `没有读到 ${patchRelative}` } : {},
   }
 }
@@ -279,6 +358,42 @@ export async function scanProfile(profile: string): Promise<PluginReport> {
   }
   conflicts.push(...collisions(insertedBy, 'PL002'))
   conflicts.push(...collisions(patchedBy, 'PL003'))
+
+  // PL006：技能链路被插件层动了。这是“会诊”的核心——技能消失的症状，
+  // 根因常在这一层，而技能侧的报告只会说“0 个技能”，看起来像技能坏了。
+  const touchpoints = bundles.flatMap(bundle =>
+    bundle.skillTouchpoints.map(point => ({ bundle: bundle.name, ...point })))
+
+  for (const point of touchpoints) {
+    if (point.key !== 'disabled') continue
+    conflicts.push({
+      rule: 'PL006',
+      severity: 'warn',
+      title: RULE_TITLES.PL006,
+      detail: `${point.bundle} 把技能条目 ${point.entryId} 整个禁用了（disabled: true）。`
+        + `这个条目提供的技能来源会从会话里消失——症状是“技能全没了”，但技能文件本身没有任何问题。`,
+      suggestion: `确认这是不是有意的；不是的话，把 ${point.bundle} 的 patch 里 ${point.entryId} 的 disabled 去掉，或禁用这个插件。`,
+      involved: [point.bundle],
+    })
+  }
+
+  // 关掉默认技能根、又没有任何插件提供替代目录 → 会话里一个本地技能都看不到。
+  // 注意“任何插件”：customSkillDirs 写在别的 bundle 里同样有效，不能只看同一个。
+  const hasCustomDirs = touchpoints.some(point =>
+    point.key === 'customSkillDirs' && point.value !== '[]')
+  for (const point of touchpoints) {
+    if (point.key !== 'includeDefaultRoots' || point.value !== 'false') continue
+    if (hasCustomDirs) continue
+    conflicts.push({
+      rule: 'PL006',
+      severity: 'warn',
+      title: RULE_TITLES.PL006,
+      detail: `${point.bundle} 把 ${point.entryId} 的默认技能根关了（includeDefaultRoots=false），`
+        + `而 profile 里没有任何插件配置 customSkillDirs 替代——会话里可能一个本地技能都看不到。`,
+      suggestion: `要么把 ${point.entryId}.includeDefaultRoots 改回 true，要么在同一处配置 customSkillDirs 指向你的技能目录。`,
+      involved: [point.bundle],
+    })
+  }
 
   return { profileName: profile, profileDir, bundles, conflicts, notes }
 }

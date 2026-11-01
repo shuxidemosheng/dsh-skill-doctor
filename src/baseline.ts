@@ -11,10 +11,11 @@
  *  - 对比按规则聚合（和聚类同一哲学：按根因看，不按个数看），
  *    只有"变差"才点名具体技能——那是需要立刻看的新问题。
  */
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { resolve } from 'node:path'
 import type { ResolvedConfig } from './config.js'
+import { dshHome } from './plugins/scan.js'
 import { RULES, RULE_IDS } from './scanner/rules.js'
 import type { ScanResult, Severity, SkillLintResult } from './types.js'
 
@@ -83,6 +84,27 @@ export function expandHome(path: string): string {
   return path
 }
 
+/**
+ * `baseline: auto` 时的病历路径：`$DSH_HOME/skill-doctor/record-<profile>.json`。
+ *
+ * 为什么要支持 auto：复诊的第一版只给了 CLI `--save`，插件用户被迫开终端——
+ * 违背"会话内一个入口"。auto 模式下病历由插件自动维护（每次体检先读旧、后写新），
+ * 用户只需在 patch 里配一次 `baseline: auto`，之后复诊完全无感。
+ * 按 profile 分文件：desktop 和 headless 的技能集合不同，病历不能混。
+ */
+export function autoRecordPath(profile: string): string {
+  return resolve(dshHome(), 'skill-doctor', `record-${profile}.json`)
+}
+
+/**
+ * 把病历写到磁盘。auto 模式由 skill_doctor 在每次体检后调用，
+ * CLI `--save` 也用它；写之前先建目录（第一次跑时 skill-doctor/ 还不存在）。
+ */
+export async function saveBaseline(path: string, baseline: BaselineFile): Promise<void> {
+  await mkdir(resolve(path, '..'), { recursive: true })
+  await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8')
+}
+
 function joinHome(rest: string): string {
   return resolve(homedir(), rest)
 }
@@ -107,11 +129,6 @@ export function buildBaseline(
     }
   }
   return { version: FORMAT_VERSION, savedAt, meta, skills }
-}
-
-/** 把病历写到磁盘；只在 CLI `--save` 时调用。 */
-export async function saveBaseline(path: string, baseline: BaselineFile): Promise<void> {
-  await writeFile(path, `${JSON.stringify(baseline, null, 2)}\n`, 'utf8')
 }
 
 /**

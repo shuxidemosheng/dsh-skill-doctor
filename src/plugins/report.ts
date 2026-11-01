@@ -166,6 +166,46 @@ function runtimeSection(runtime: RuntimeSummary | undefined): string[] {
   return lines
 }
 
+/**
+ * 会诊章节：技能 × 插件交叉。
+ *
+ * skill_doctor 管技能、这里管插件，两边单独看都可能"没问题"——
+ * 但真实的故障经常跨这两层：某个插件的 patch 把技能目录改了，
+ * 技能报告只会显示"0 个技能"，看起来像技能坏了，根因却在插件层。
+ * 这一节把所有会改变"会话里能看到哪些技能"的插件层改动摆到一张桌子上。
+ */
+function consultationSection(report: PluginReport): string[] {
+  const lines: string[] = ['## 会诊：技能链路交叉检查', '']
+  const points = report.bundles.flatMap(bundle =>
+    bundle.skillTouchpoints.map(point => ({ bundle: bundle.name, ...point })))
+
+  if (points.length === 0) {
+    lines.push(
+      '插件层没有任何会改变技能链路的 patch：没人动技能目录配置，也没人禁用技能条目。',
+      '如果技能消失了，原因**不在插件配置层**——回到技能文件本身，用 `skill_doctor` 查。',
+      '',
+    )
+    return lines
+  }
+
+  lines.push(
+    '`skill_doctor` 管技能，这里管插件；真实的故障经常跨这两层。技能报告只会显示"0 个技能"，',
+    '看不出是插件把目录改了。下面是所有会改变"会话里能看到哪些技能"的插件层改动：',
+    '',
+  )
+  for (const point of points) {
+    lines.push(`- \`${point.bundle}\` → \`${point.entryId}.${point.key}\` = \`${point.value}\``)
+  }
+  lines.push('')
+
+  const pl006 = report.conflicts.filter(conflict => conflict.rule === 'PL006')
+  lines.push(pl006.length > 0
+    ? `**其中 ${pl006.length} 处会造成技能消失**（见上面的冲突列表）：如果你的现象正是"技能看不见/变少了"，根因大概率在这里，而不是技能文件本身。`
+    : '这些改动看起来是有意配置的，不一定是故障；但如果你现在的现象是"技能看不见/变少了"，先对照上面这几行——根因多半在插件层，而不是技能文件本身。')
+  lines.push('')
+  return lines
+}
+
 /** Markdown 报告（通俗风格）。 */
 export function renderPluginMarkdown(report: PluginReport, runtime?: RuntimeSummary): string {
   const conflicts = sortConflicts(report.conflicts)
@@ -200,6 +240,8 @@ export function renderPluginMarkdown(report: PluginReport, runtime?: RuntimeSumm
   if (blocking.length === 0 && info.length === 0) {
     lines.push('没有发现冲突。', '')
   }
+
+  lines.push(...consultationSection(report))
 
   lines.push('---', '', '## 技术细节（可跳过）', '')
   lines.push(`- profile 目录：${report.profileDir}`)

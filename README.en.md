@@ -22,8 +22,9 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 ## Highlights
 
 - **Shows what the model actually sees.** Not "description too long", but the truncated text **verbatim** — you can tell at a glance whether your trigger words made the cut.
-- **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated.
+- **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated. Truncated descriptions get a **rewrite worksheet** (trigger skeleton + budget): the model drafts, you confirm before it is written — the loop from diagnosis to fix stays closed.
 - **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
+- **Consults across layers.** "0 skills" does not mean the skills broke — the plugin report lists every patch that touched the skill chain (who → which entry → which key), and the skill report points back at the plugin layer when it comes up empty.
 - **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
@@ -90,6 +91,8 @@ so only tool names are shown.
 
 The panel reads the current session window, so **calls that scrolled out are gone**; entries it has seen are kept, so totals never go backwards. The footer says so.
 
+The overlay header has two tabs: **Activity** and **Usage**. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
+
 ## Tools
 
 | Tool | What it does | When |
@@ -106,6 +109,8 @@ The panel reads the current session window, so **calls that scrolled out are gon
 ```
 
 Omit `name` for a full check; `extraRoots` points at directories dsh does not index (for example `~/.claude/skills`).
+
+Add `"rewrite": true` for the **rewrite worksheet** mode: without `name`, worksheets for every description-truncated skill (same-prefix skills grouped into a template — one template draft plus per-skill variable parts); with `name`, a single worksheet. A worksheet = hard constraints + verbatim visible/cut text + extracted trigger phrases + a deterministic skeleton — the model fills in the copy, **the user confirms before anything is written**, and a re-run of skill_doctor verifies the fix via the follow-up comparison.
 
 Output order is fixed: **verdict → evidence → prescription**.
 
@@ -147,6 +152,9 @@ Explains why a skill is missing, never selected, or failing to load: winning pro
 | PL002 | warn | Two plugins inserting the same loader entry (only one wins) |
 | PL003 | warn | Two plugins patching the same row (later one silently wins) |
 | PL004 | error/info | Enabled but package missing / installed but not enabled |
+| PL006 | warn | A plugin touched the skill chain: disabled the skill entry, or turned off default roots with no replacement |
+
+**Consultation: skills × plugins.** `skill_doctor` handles skills, `plugin_doctor` handles plugins — but real failures often span both layers: a plugin patch changes the skill catalogue, the skill report just says "0 skills", and it looks like the skills broke. The plugin report's consultation section puts every bundle touchpoint on the skill chain (who → which entry → which key) on one table; conversely, the skill report points at the plugin layer when it finds nothing. One entry point, one cross-check.
 
 **At runtime** it soft-probes `pluginInventory` for each bundle's fiber phase and calls `ctx.tools.schemas(exec.agent)` for the tools actually visible in this session:
 
@@ -250,13 +258,22 @@ Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usag
 | `severityThreshold` | `info` | Output filter |
 | `includeProviders` | `[]` | Only these providers |
 | `excludeProviders` | `[]` | Skip these providers |
-| `baseline` | none | Path to a record file (supports `~`); when set, reports include a follow-up comparison |
+| `baseline` | none | `auto` (recommended: the record is maintained per profile) or a record file path (supports `~`); when set, reports include a follow-up comparison |
 
 Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
 
 ## Record & follow-up
 
-One checkup is easy; knowing whether this run is better than the last one is not. The CLI can save a scan as a record (JSON) and diff the next run against it:
+One checkup is easy; knowing whether this run is better than the last one is not. Two ways:
+
+**Fully automatic in-session (recommended for plugin users, no terminal needed)**: set `baseline: auto` in the plugin config; every checkup then stores the record and diffs against the previous one automatically. The first run archives ("first record"), from the second on the report carries the follow-up comparison:
+
+```yaml
+config:
+  baseline: auto    # one record file per profile, under ~/.dsh/skill-doctor/
+```
+
+**Manual via CLI (CI / you own the file)**:
 
 ```bash
 # First run: check and save the record
@@ -286,7 +303,8 @@ Overall: 5 → 3 findings.
 
 - The record is plain JSON and can be committed; in CI, run `--compare --json` and gate on a non-empty `comparison.regressed`.
 - Keep the same measuring stick: the record stores the `severityThreshold` and enabled rules it was saved with; on mismatch the report says the numbers are not directly comparable instead of silently diffing.
-- The plugin tools stay read-only: `skill_doctor` never writes. To get the follow-up comparison inside a session, point config `baseline` (table above) at the record; it is only read, and comparison is skipped when unreadable.
+- The plugin's only write behavior is the record itself: `skill_doctor` never touches skill files; with `baseline` configured it writes the checkup result into that one record JSON, and skips the comparison when the record is unreadable.
+- **Applying a confirmed draft has a deterministic command**: `dsh-skill-lint --set-description <skill> --from <draft-file>` (add `--apply` to write). It replaces only the description line in the frontmatter (YAML-safe escaping, everything else byte-preserved including line endings), backs up to `.bak`, and rolls back automatically if post-write verification fails — no hand-editing frontmatter, no escaping accidents.
 
 ## Limits
 

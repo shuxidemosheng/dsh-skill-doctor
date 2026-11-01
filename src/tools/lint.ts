@@ -19,8 +19,10 @@ export function buildLintTool(ctx: Context, config: ResolvedConfig): ReturnType<
   return defineTool({
     name: 'skill_lint',
     description: 'Lint DeepSeek Harness skills visible to this session: frontmatter, kebab-case name, description length, body token budget, missing resource references, invalid invocation booleans, shadowed duplicate names, and heuristic risky-instruction patterns. '
+      + 'This is the rule-by-rule / CI-style verbose mode; for interactive diagnosis prefer skill_doctor. '
       + 'Use it before trusting a third-party skill, after editing a SKILL.md, or when a skill seems not to work. '
-      + 'It only reads files; it never changes or executes a skill.',
+      + 'It only reads files; it never changes or executes a skill. '
+      + 'The tool result is already a complete Markdown report: reply with it verbatim (at most one short lead-in sentence); do not summarize or rebuild it as your own tables.',
     parameters: {
       name: { type: 'string', description: 'Lint one skill by exact name; omit to lint every visible skill.' },
       provider: { type: 'string', description: 'Only lint skills from this provider.' },
