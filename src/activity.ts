@@ -362,3 +362,72 @@ export function usageSummary(record: UsageRecord): {
 export function skillLoadNames(entries: readonly ActivityEntry[]): string[] {
   return entries.filter(entry => entry.kind === 'skill' && entry.detail.length > 0).map(entry => entry.detail)
 }
+
+// ---------- 面板位置（可拖动 + 记住位置） ----------
+
+/** 浮层左上角坐标（视口坐标系，单位 px）。 */
+export interface PanelPosition {
+  readonly x: number
+  readonly y: number
+}
+
+/** 位置存储键；与统计同理，放本机 localStorage，不上传。 */
+export const PANEL_POS_KEY = 'dsh-skill-doctor:panel-pos'
+
+/** 拖动时至少保留的可见边距，避免把面板拖出屏幕后找不回来。 */
+export const PANEL_MARGIN = 8
+
+/**
+ * 把位置夹进视口内。
+ *
+ * 三个来源会让坐标越界：拖到边缘、窗口缩小、换显示器后分辨率变化。
+ * 这里统一处理——宁可贴边，也不让面板有一半在屏幕外。
+ */
+export function clampPanelPosition(
+  position: PanelPosition,
+  viewport: { readonly width: number; readonly height: number },
+  size: { readonly width: number; readonly height: number },
+  margin = PANEL_MARGIN,
+): PanelPosition {
+  const maxX = Math.max(margin, viewport.width - size.width - margin)
+  const maxY = Math.max(margin, viewport.height - size.height - margin)
+  return {
+    x: Math.min(Math.max(position.x, margin), maxX),
+    y: Math.min(Math.max(position.y, margin), maxY),
+  }
+}
+
+/** 读回上次的位置；没有或数据坏了返回 undefined（回到默认居中）。 */
+export function loadPanelPosition(storage: Storage | undefined): PanelPosition | undefined {
+  if (storage === undefined) return undefined
+  try {
+    const raw = storage.getItem(PANEL_POS_KEY)
+    if (raw === null) return undefined
+    const parsed = JSON.parse(raw) as { x?: unknown; y?: unknown }
+    if (typeof parsed.x !== 'number' || typeof parsed.y !== 'number') return undefined
+    if (!Number.isFinite(parsed.x) || !Number.isFinite(parsed.y)) return undefined
+    return { x: parsed.x, y: parsed.y }
+  } catch {
+    return undefined
+  }
+}
+
+/** 清掉记住的位置（双击标题复位时用）。 */
+export function clearPanelPosition(storage: Storage | undefined): void {
+  if (storage === undefined) return
+  try {
+    storage.removeItem(PANEL_POS_KEY)
+  } catch {
+    /* 忽略 */
+  }
+}
+
+/** 记住位置；失败静默（隐私模式 / 配额满），下次回默认位置即可。 */
+export function savePanelPosition(storage: Storage | undefined, position: PanelPosition): void {
+  if (storage === undefined) return
+  try {
+    storage.setItem(PANEL_POS_KEY, JSON.stringify({ x: Math.round(position.x), y: Math.round(position.y) }))
+  } catch {
+    /* 忽略：位置不是关键数据 */
+  }
+}

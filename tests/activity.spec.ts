@@ -256,3 +256,41 @@ describe('mode chips', () => {
     expect(templateOf('nope')).toBeUndefined()
   })
 })
+
+describe('panel position', () => {
+  const viewport = { width: 1200, height: 800 }
+  const size = { width: 440, height: 340 }
+
+  it('keeps the panel inside the viewport on all four edges', async () => {
+    const { clampPanelPosition } = await import('../src/activity')
+    expect(clampPanelPosition({ x: -50, y: -20 }, viewport, size)).toEqual({ x: 8, y: 8 })
+    expect(clampPanelPosition({ x: 5000, y: 5000 }, viewport, size))
+      .toEqual({ x: 1200 - 440 - 8, y: 800 - 340 - 8 })
+    expect(clampPanelPosition({ x: 100, y: 100 }, viewport, size)).toEqual({ x: 100, y: 100 })
+  })
+
+  it('degrades to the margin when the viewport is smaller than the panel', async () => {
+    const { clampPanelPosition } = await import('../src/activity')
+    // 窗口比面板还窄：不该出现负数坐标，直接贴边。
+    expect(clampPanelPosition({ x: 100, y: 100 }, { width: 300, height: 200 }, size)).toEqual({ x: 8, y: 8 })
+  })
+
+  it('round-trips the remembered position and clears it on reset', async () => {
+    const { loadPanelPosition, savePanelPosition, clearPanelPosition } = await import('../src/activity')
+    const store = fakeStorage()
+    expect(loadPanelPosition(store)).toBeUndefined()
+    savePanelPosition(store, { x: 321.4, y: 77.6 })
+    expect(loadPanelPosition(store)).toEqual({ x: 321, y: 78 })
+    clearPanelPosition(store)
+    expect(loadPanelPosition(store)).toBeUndefined()
+  })
+
+  it('ignores a broken stored position instead of crashing the panel', async () => {
+    const { loadPanelPosition, PANEL_POS_KEY } = await import('../src/activity')
+    const store = fakeStorage()
+    store.setItem(PANEL_POS_KEY, '{oops')
+    expect(loadPanelPosition(store)).toBeUndefined()
+    store.setItem(PANEL_POS_KEY, JSON.stringify({ x: 'left', y: 1 }))
+    expect(loadPanelPosition(store)).toBeUndefined()
+  })
+})

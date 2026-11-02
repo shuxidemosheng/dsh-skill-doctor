@@ -24,11 +24,16 @@ import {
   recordSession,
   recordSkillLoad,
   saveUsage,
+  clampPanelPosition,
+  clearPanelPosition,
+  loadPanelPosition,
+  savePanelPosition,
   skillLoadNames,
   summarize,
   topSkills,
   usageSummary,
   type ActivityEntry,
+  type PanelPosition,
   type UsageRecord,
 } from './activity.js'
 
@@ -62,6 +67,11 @@ let overlayMounted = false
 
 /** 客户端 ctx（apply 时存下来），chips 需要它去拿会话输入 API。 */
 let clientCtx: unknown
+
+/** 浮层位置；undefined = 默认居中偏下（首次使用/用户双击复位后）。 */
+let panelPos: PanelPosition | undefined
+/** 拖动中的临时状态（不参与渲染，只给事件处理用）。 */
+let dragState: { startX: number; startY: number; originX: number; originY: number } | undefined
 
 /** 跨会话使用统计；apply 时从 localStorage 载入，之后随调用累加。 */
 let usage: UsageRecord = emptyUsage()
@@ -248,6 +258,53 @@ function switchTab(tab: 'activity' | 'usage' | 'modes'): void {
 function closePanel(): void {
   if (!panelOpen) return
   panelOpen = false
+  emit()
+}
+
+/** 开始拖动：记录起点与面板当前位置，指针捕获保证移出面板也能收到 move。 */
+function startDrag(event: { button: number; clientX: number; clientY: number; pointerId: number; currentTarget: HTMLElement; preventDefault: () => void }): void {
+  if (event.button !== 0) return
+  const panel = event.currentTarget.parentElement
+  if (panel === undefined || panel === null) return
+  const rect = panel.getBoundingClientRect()
+  dragState = {
+    startX: event.clientX,
+    startY: event.clientY,
+    originX: rect.left,
+    originY: rect.top,
+  }
+  event.currentTarget.setPointerCapture?.(event.pointerId)
+  event.preventDefault()
+}
+
+/** 拖动中：按位移算新位置，并夹进视口（不让面板被拖出屏幕）。 */
+function moveDrag(event: { clientX: number; clientY: number; currentTarget: HTMLElement }): void {
+  if (dragState === undefined) return
+  const panel = event.currentTarget.parentElement
+  const size = {
+    width: panel?.offsetWidth ?? 440,
+    height: panel?.offsetHeight ?? 340,
+  }
+  panelPos = clampPanelPosition(
+    { x: dragState.originX + (event.clientX - dragState.startX), y: dragState.originY + (event.clientY - dragState.startY) },
+    { width: typeof window === 'undefined' ? 1280 : window.innerWidth, height: typeof window === 'undefined' ? 800 : window.innerHeight },
+    size,
+  )
+  emit()
+}
+
+/** 结束拖动：落库位置，下次打开仍在原处。 */
+function endDrag(): void {
+  if (dragState === undefined) return
+  dragState = undefined
+  if (panelPos !== undefined) savePanelPosition(storageOf(), panelPos)
+}
+
+/** 双击标题：回到默认位置（居中偏下）并清掉记住的坐标。 */
+function resetDrag(): void {
+  dragState = undefined
+  panelPos = undefined
+  clearPanelPosition(storageOf())
   emit()
 }
 
@@ -554,9 +611,9 @@ function ActivityOverlay(): JSX.Element | null {
     <div
       style={{
         position: 'fixed',
-        left: '50%',
-        bottom: 96,
-        transform: 'translateX(-50%)',
+        ...panelPos === undefined
+          ? { left: '50%', bottom: 96, transform: 'translateX(-50%)' }
+          : { left: panelPos.x, top: panelPos.y },
         width: 'min(440px, calc(100vw - 32px))',
         maxHeight: 340,
         display: 'flex',
@@ -573,6 +630,12 @@ function ActivityOverlay(): JSX.Element | null {
       }}
     >
       <div
+        onPointerDown={event => startDrag(event as unknown as Parameters<typeof startDrag>[0])}
+        onPointerMove={event => moveDrag(event as unknown as Parameters<typeof moveDrag>[0])}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={resetDrag}
+        title="拖动可移动面板，双击复位"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -580,8 +643,12 @@ function ActivityOverlay(): JSX.Element | null {
           padding: '10px 14px',
           fontSize: 12,
           fontWeight: 600,
+          cursor: dragState === undefined ? 'grab' : 'grabbing',
+          userSelect: 'none',
+          touchAction: 'none',
         }}
       >
+        <span aria-hidden="true" style={{ opacity: 0.45, letterSpacing: 1 }}>⠿</span>
         <span aria-hidden="true">🩺</span>
         <span>技能医生</span>
         <span style={{ flex: 1 }} />
@@ -709,8 +776,9 @@ function ensureOverlay(): void {
  */
 export function apply(ctx: { slots: { inject: (name: string, fn: () => void) => void; register: (options: Record<string, unknown>, component: unknown) => void } }): void {
   clientCtx = ctx
-  // 统计是纯客户端状态：宿主注入完成后立刻从 localStorage 恢复累计值。
+  // 统计与面板位置都是纯客户端状态：宿主注入完成后立刻从 localStorage 恢复。
   usage = loadUsage(storageOf())
+  panelPos = loadPanelPosition(storageOf())
   ensureOverlay()
   ctx.slots.inject('conversation.input.dock', () => {
     ctx.slots.register({ name: 'conversation.input.dock', id: BAR_ID, order: 60 }, ActivityBar)
