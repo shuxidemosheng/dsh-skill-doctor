@@ -26,6 +26,7 @@ import {
   saveUsage,
   clampPanelPosition,
   clearPanelPosition,
+  isInteractiveTarget,
   loadPanelPosition,
   savePanelPosition,
   skillLoadNames,
@@ -262,8 +263,18 @@ function closePanel(): void {
 }
 
 /** 开始拖动：记录起点与面板当前位置，指针捕获保证移出面板也能收到 move。 */
-function startDrag(event: { button: number; clientX: number; clientY: number; pointerId: number; currentTarget: HTMLElement; preventDefault: () => void }): void {
+function startDrag(event: {
+  button: number
+  clientX: number
+  clientY: number
+  pointerId: number
+  currentTarget: HTMLElement
+  target: unknown
+  preventDefault: () => void
+}): void {
   if (event.button !== 0) return
+  // 按在按钮/输入框上不启动拖动：否则标题栏捕获指针，按钮的 click 收不到。
+  if (isInteractiveTarget(event.target)) return
   const panel = event.currentTarget.parentElement
   if (panel === undefined || panel === null) return
   const rect = panel.getBoundingClientRect()

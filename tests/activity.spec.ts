@@ -294,3 +294,21 @@ describe('panel position', () => {
     expect(loadPanelPosition(store)).toBeUndefined()
   })
 })
+
+describe('drag target guard', () => {
+  it('ignores buttons and inputs so their clicks still fire', async () => {
+    const { isInteractiveTarget } = await import('../src/activity')
+    const button = { closest: (sel: string) => (sel.includes('button') ? {} : null) }
+    const input = { closest: (sel: string) => (sel.includes('input') ? {} : null) }
+    expect(isInteractiveTarget(button)).toBe(true)
+    expect(isInteractiveTarget(input)).toBe(true)
+  })
+
+  it('allows dragging from plain header areas', async () => {
+    const { isInteractiveTarget } = await import('../src/activity')
+    const text = { closest: () => null }
+    expect(isInteractiveTarget(text)).toBe(false)
+    expect(isInteractiveTarget(null)).toBe(false)
+    expect(isInteractiveTarget(undefined)).toBe(false)
+  })
+})

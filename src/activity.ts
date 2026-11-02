@@ -431,3 +431,16 @@ export function savePanelPosition(storage: Storage | undefined, position: PanelP
     /* 忽略：位置不是关键数据 */
   }
 }
+
+/**
+ * 指针是否落在交互元素上（按钮、输入框、链接…）。
+ *
+ * 拖动只该由"空白处/标题文字"发起：如果按在按钮上还启动拖动，标题栏会
+ * 捕获指针（setPointerCapture），按钮就再也收不到 click——关闭按钮失效
+ * 就是这么来的。这条判断必须发生在 preventDefault 与捕获之前。
+ */
+export function isInteractiveTarget(target: unknown): boolean {
+  const element = target as { closest?: (selector: string) => unknown } | null | undefined
+  if (element === null || element === undefined || typeof element.closest !== 'function') return false
+  return element.closest('button, input, textarea, select, a, [role="button"], [contenteditable="true"]') !== null
+}
