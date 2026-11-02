@@ -99,8 +99,8 @@ Four commands ship with the plugin. Type `/` in the composer, pick one — it be
 
 | Command | What it does | Example |
 |---|---|---|
-| `/doctor` | Plain-text checkup summary: tier counts, common root cause, cut-off triggers | `/doctor` or `/doctor D://skills` |
-| `/scope` | Check one directory (or a single `SKILL.md`) | `/scope D://AIcoding//test-skills` |
+| `/doctor` | Plain-text checkup summary: tier counts, common root cause, cut-off triggers | `/doctor` or `/doctor D:/skills` |
+| `/scope` | Check one directory (or a single `SKILL.md`) | `/scope D:/skills` |
 | `/followup` | Follow-up diff against the last record | `/followup` |
 | `/rewrite` | Description rewrite worksheet (budget + cut triggers + skeleton) | `/rewrite nature-alpha` |
 

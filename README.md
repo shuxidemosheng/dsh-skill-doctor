@@ -99,13 +99,13 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor
 
 | 命令 | 作用 | 例 |
 |---|---|---|
-| `/doctor` | 全体检的纯文本摘要：分档、共性问题、被切掉的触发说法 | `/doctor` 或 `/doctor D://skills` |
-| `/scope` | 只查一个目录（或某个 `SKILL.md`） | `/scope D://AIcoding//test-skills` |
+| `/doctor` | 全体检的纯文本摘要：分档、共性问题、被切掉的触发说法 | `/doctor` 或 `/doctor D:/skills` |
+| `/scope` | 只查一个目录（或某个 `SKILL.md`） | `/scope D:/skills` |
 | `/followup` | 复诊：和上次病历对比 | `/followup` |
 | `/rewrite` | 简介改写工单（字数预算 + 被切说法 + 骨架） | `/rewrite nature-alpha` |
 
 ```
-技能体检 · 4 个技能（只查 D:/AIcoding/test-skills）
+技能体检 · 4 个技能（只查 D:/skills）
 ⛔ 用不了 0 · ⚠️ 影响大 3 · 💡 影响小 0 · 💡 其他 0 · ✅ 正常 1
 
 共性问题（先改这里最划算）

@@ -208,7 +208,7 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
       ...COMMAND_META.scope,
       run: async input => {
         const target = input.trim()
-        if (target.length === 0) return '用法：/scope <目录或 SKILL.md 路径>\n例：/scope D:\\AIcoding\\test-skills'
+        if (target.length === 0) return '用法：/scope <目录或 SKILL.md 路径>\n例：/scope D:\\skills'
         const scanned = await scanRoots([target], config.maxFileBytes)
         if (scanned.skills.length === 0) {
           const why = scanned.issues.length === 0 ? '' : `\n扫描提示：${scanned.issues.join('；')}`
