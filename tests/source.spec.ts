@@ -20,6 +20,17 @@ describe('doctor candidates', () => {
     }
   })
 
+  it('describes each entry in one short sentence, without repeating its name', () => {
+    for (const candidate of DOCTOR_CANDIDATES) {
+      // 菜单里右边那列是"一句话功能说明"：超过 18 字就会被挤成两行、读不动。
+      expect(candidate.description.length).toBeLessThanOrEqual(18)
+      // 括号和冒号会让它变成"功能 + 操作提示"的混合体，用户反馈过看不清。
+      expect(candidate.description).not.toMatch(/[（(：:]/)
+      // 名字已经说了"复诊"，说明里再写"复诊…"就是重复。
+      expect(candidate.description.startsWith(candidate.name)).toBe(false)
+    }
+  })
+
   it('keeps names short enough to read as a label in the composer', () => {
     for (const candidate of DOCTOR_CANDIDATES) {
       // 输入框里它是一个"标签"，不是一整句；超过 4 个字就会把输入区挤满。

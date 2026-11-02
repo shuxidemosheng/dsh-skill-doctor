@@ -165,10 +165,10 @@ export function plainFollowUp(diff: BaselineDiff, label: string): string {
 
 /** 命令名 → 输入提示；`<...>` 部分由用户补齐。 */
 const COMMAND_META = {
-  doctor: { description: '技能体检：看模型能不能看到、会不会选中，并聚合共性问题', hint: '[目录（可留空=全部）]' },
-  scope: { description: '只体检指定目录下的技能', hint: '<目录或 SKILL.md 路径>' },
-  followup: { description: '复诊：和上次病历对比，看好了多少、坏在哪', hint: '[目录（可留空=全部）]' },
-  rewrite: { description: '简介改写工单：字数预算 + 被切掉的触发说法 + 骨架', hint: '<技能名>' },
+  doctor: { description: '体检所有技能', hint: '[目录，留空=全部]' },
+  scope: { description: '只体检一个目录', hint: '<目录或 SKILL.md 路径>' },
+  followup: { description: '和上次体检对比', hint: '[目录，留空=全部]' },
+  rewrite: { description: '简介改写工单', hint: '<技能名>' },
 } as const
 
 /**

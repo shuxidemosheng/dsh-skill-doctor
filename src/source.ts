@@ -37,12 +37,12 @@ export interface DoctorCandidate {
  * 名字刻意短：它在输入框里等同"标签"，长了就退化成句子。
  */
 export const DOCTOR_CANDIDATES: readonly DoctorCandidate[] = [
-  { name: '体检', label: '体检全部', description: '全部技能体检：模型能不能看到、会不会选中', command: 'doctor' },
-  { name: '查目录', label: '只看目录', description: '只体检这个目录（后面接路径）', command: 'scope' },
-  { name: '改写', label: '改写工单', description: '简介改写工单（后面接技能名）', command: 'rewrite' },
-  { name: '复诊', label: '复诊对比', description: '和上次病历对比：好了多少、坏在哪', command: 'followup' },
-  { name: '诊断', label: '诊断一个', description: '诊断单个技能（后面接技能名）', fallback: '诊断这个技能：' },
-  { name: '会诊', label: '插件会诊', description: '插件冲突 + 技能链路交叉检查', fallback: '插件会诊：查冲突' },
+  { name: '体检', label: '体检全部', description: '查所有技能有没有坏、模型看得到吗', command: 'doctor' },
+  { name: '查目录', label: '只看目录', description: '只查指定目录里的技能', command: 'scope' },
+  { name: '改写', label: '改写工单', description: '为超长简介生成一份改写稿', command: 'rewrite' },
+  { name: '复诊', label: '复诊对比', description: '对照上次结果，看好了还是坏了', command: 'followup' },
+  { name: '诊断', label: '诊断一个', description: '查某个技能为什么没被模型选中', fallback: '诊断这个技能：' },
+  { name: '会诊', label: '插件会诊', description: '查插件有没有把技能配置改坏', fallback: '插件会诊：查冲突' },
 ]
 
 /** 引用源的注册名（`(trigger, name)` 唯一，撞了会抛）。 */
