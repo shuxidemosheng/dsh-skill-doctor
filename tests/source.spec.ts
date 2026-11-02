@@ -20,10 +20,12 @@ describe('doctor candidates', () => {
 
   it('describes each entry in one short sentence, without repeating its name', () => {
     for (const candidate of DOCTOR_CANDIDATES) {
-      // 菜单里右边那列是"一句话功能说明"：超过 18 字就会被挤成两行、读不动。
-      expect(candidate.description.length).toBeLessThanOrEqual(18)
+      // 菜单右列是"一句话功能说明"：30 字是用户给的上限，再长就挤成三行。
+      expect([...candidate.description].length).toBeLessThanOrEqual(30)
       // 括号和冒号会让它变成"功能 + 操作提示"的混合体，用户反馈过看不清。
       expect(candidate.description).not.toMatch(/[（(：:]/)
+      // 说明要交代"结果"，不能只有一个动词（"体检所有技能"这种等于没说）。
+      expect([...candidate.description].length).toBeGreaterThanOrEqual(20)
       // 名字已经说了"复诊"，说明里再写"复诊…"就是重复。
       expect(candidate.description.startsWith(candidate.name)).toBe(false)
     }

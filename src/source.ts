@@ -43,12 +43,12 @@ export interface DoctorCandidate {
  * 名字刻意短：它在输入框里等同"标签"，长了就退化成句子。
  */
 export const DOCTOR_CANDIDATES: readonly DoctorCandidate[] = [
-  { name: '体检', label: '体检全部', token: 'doctor', description: '查所有技能有没有坏、模型看得到吗' },
-  { name: '查目录', label: '只看目录', token: 'scope', description: '只查指定目录里的技能' },
-  { name: '改写', label: '改写工单', token: 'rewrite', description: '为超长简介生成一份改写稿' },
-  { name: '复诊', label: '复诊对比', token: 'followup', description: '对照上次结果，看好了还是坏了' },
-  { name: '诊断', label: '诊断一个', token: 'why', description: '查某个技能为什么没被模型选中' },
-  { name: '会诊', label: '插件会诊', token: 'clash', description: '查插件有没有把技能配置改坏' },
+  { name: '体检', label: '体检全部', token: 'doctor', description: '检查全部技能，看有没有坏、模型能否看到，并把同类问题合并' },
+  { name: '查目录', label: '只看目录', token: 'scope', description: '只检查你指定的目录，不看别处，适合排查单个项目' },
+  { name: '改写', label: '改写工单', token: 'rewrite', description: '给简介超长的技能出改写稿，附字数预算和被切掉的触发词' },
+  { name: '复诊', label: '复诊对比', token: 'followup', description: '和上次体检对比，看哪些修好了、哪些又变差了、整体差多少' },
+  { name: '诊断', label: '诊断一个', token: 'why', description: '查一个技能为什么没被模型选中，给出具体原因和改法' },
+  { name: '会诊', label: '插件会诊', token: 'clash', description: '检查有没有插件改坏了技能目录配置，导致技能突然消失' },
 ]
 
 /** 引用源的注册名（`(trigger, name)` 唯一，撞了会抛）。 */
