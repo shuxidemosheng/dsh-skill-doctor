@@ -93,6 +93,21 @@ The panel reads the current session window, so **calls that scrolled out are gon
 
 The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: six buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation) — click one, it highlights and its request template is put into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
 
+## Slash commands (the fastest entry point in the client)
+
+Four commands ship with the plugin. Type `/` in the composer, pick one — it becomes a **blue command chip**; add the argument inline and press enter. They run **without the model**, so they are instant and cannot be reworded:
+
+| Command | What it does | Example |
+|---|---|---|
+| `/doctor` | Plain-text checkup summary: tier counts, common root cause, cut-off triggers | `/doctor` or `/doctor D://skills` |
+| `/scope` | Check one directory (or a single `SKILL.md`) | `/scope D://AIcoding//test-skills` |
+| `/followup` | Follow-up diff against the last record | `/followup` |
+| `/rewrite` | Description rewrite worksheet (budget + cut triggers + skeleton) | `/rewrite nature-alpha` |
+
+Output is plain text (one node in the flow, no table rendering), so it is trimmed to "what to look at first". For the full report with prescriptions, still ask the model to run `skill_doctor` — both paths share the same scanner.
+
+> Why commands are blue chips but panel buttons are not: a chip is dsh's command node and only host-registered commands get one; the panel runs in the webview and can only put text into the composer.
+
 ## Tools
 
 | Tool | What it does | When |

@@ -97,6 +97,20 @@ export function autoRecordPath(profile: string): string {
 }
 
 /**
+ * 从配置值算出病历文件路径。
+ *
+ * 三种取值：`auto`（默认，按 profile 分文件）、`off`（关闭，返回 undefined）、
+ * 具体路径（支持 `~`）。工具与斜杠命令共用同一套判断，避免出现"工具写 auto、
+ * 命令写别处"这种两份病历各记一半的情况。
+ * @param baseline - `ResolvedConfig.baseline`。
+ * @param profile - 当前 profile 名；拿不到时退回 `default`。
+ */
+export function recordPathOf(baseline: string, profile: string | undefined): string | undefined {
+  if (baseline === 'off') return undefined
+  return baseline === 'auto' ? autoRecordPath(profile ?? 'default') : expandHome(baseline)
+}
+
+/**
  * 把病历写到磁盘。auto 模式由 skill_doctor 在每次体检后调用，
  * CLI `--save` 也用它；写之前先建目录（第一次跑时 skill-doctor/ 还不存在）。
  */

@@ -7,6 +7,8 @@
  *   skill_explain —— 解释一个技能为什么没出现、没被模型选中、或加载失败
  *   plugin_doctor —— 已安装插件之间的结构性冲突（抢同一条目、重复安装、装了没启用）
  *
+ * 斜杠命令（宿主侧，原生蓝色 chip）：`/doctor`、`/scope`、`/followup`、`/rewrite`。
+ *
  * CLI：`dsh-skill-lint`，给技能作者和 CI 用。
  *
  * 纪律：
@@ -18,6 +20,7 @@
  * @module dsh-skill-doctor
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { registerCommands } from './commands.js'
 import { resolveConfig } from './config.js'
 import type { Config } from './config.js'
 import { buildDoctorTool } from './tools/doctor.js'
@@ -62,5 +65,14 @@ export function apply(ctx: Context, config: Config | undefined): void {
       continue
     }
     ctx.tools.register(tool)
+  }
+
+  // 命令是加分项：服务探测不到（老版本 dsh）或注册失败，都不能影响上面四个工具。
+  try {
+    registerCommands(ctx, resolved)
+  } catch (error) {
+    ctx.logger.warn(
+      `skill-doctor: slash commands unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    )
   }
 }

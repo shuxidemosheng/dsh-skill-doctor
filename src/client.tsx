@@ -588,6 +588,9 @@ function ModesView(props: { readonly sessionId?: string }): JSX.Element {
       </div>
       <div style={{ fontSize: 11, opacity: 0.6, lineHeight: 1.6, paddingTop: 8 }}>
         选一个功能 → 模板会进入输入框（拿不到输入框权限时会复制到剪贴板）→ 补上路径或技能名 → 回车。
+        <br />
+        也可以直接打斜杠命令（选中后是蓝色 chip，由插件自己执行、不经过模型）：
+        <code style={{ opacity: 0.85 }}>/doctor</code>、<code style={{ opacity: 0.85 }}>/scope &lt;目录&gt;</code>、<code style={{ opacity: 0.85 }}>/followup</code>、<code style={{ opacity: 0.85 }}>/rewrite &lt;技能名&gt;</code>
       </div>
       {modeFeedback === null ? null : (
         <div style={{ fontSize: 11, paddingTop: 6, lineHeight: 1.6, color: KIND_COLOR.plugin }}>
