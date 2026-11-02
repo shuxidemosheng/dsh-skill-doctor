@@ -206,13 +206,18 @@ function tryDomInsert(text: string): boolean {
       return target.value.endsWith(text)
     }
     const before = target.textContent ?? ''
+    // 连点同一个 chip 时不要再叠一遍：已经以这段模板结尾就当作已完成。
+    if (before.endsWith(text)) return true
     const event = new InputEvent('beforeinput', {
       bubbles: true,
       cancelable: true,
       inputType: 'insertText',
       data: text,
     })
-    target.dispatchEvent(event)
+    // dispatchEvent 返回 false 表示监听器调用了 preventDefault——编辑器已接管这次插入。
+    // 不能再补 execCommand：之前正是"先派发、再补一刀"导致模板重复两次。
+    const notPrevented = target.dispatchEvent(event)
+    if (!notPrevented) return true
     if ((target.textContent ?? '') !== before) return true
     document.execCommand('insertText', false, text)
     return true
