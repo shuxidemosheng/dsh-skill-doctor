@@ -18,14 +18,20 @@ export interface ModeChip {
   readonly template: string
 }
 
-/** 六个模式：覆盖插件的全部入口，顺序按使用频率。 */
+/**
+ * 六个模式：覆盖插件的全部入口，顺序按使用频率。
+ *
+ * 模板刻意写得短——它只是"这句话的开头"，用户接着补路径或技能名。
+ * 曾经写成整句（"用技能体检工具体检一下所有技能，把报告完整给我看。"），
+ * 用户反馈像在念提示词、太啰嗦；短标签的语义靠工具描述兜住即可。
+ */
 export const MODES: readonly ModeChip[] = [
-  { id: 'checkup', label: '体检全部', template: '用技能体检工具体检一下所有技能，把报告完整给我看。' },
-  { id: 'scoped', label: '只看目录', template: '只体检这个目录下的技能，别的地方不要看：' },
-  { id: 'single', label: '诊断一个', template: '诊断一下这个技能，告诉我模型实际能看到什么：' },
-  { id: 'rewrite', label: '改写工单', template: '用改写模式给这个技能出一份简介改写工单：' },
-  { id: 'followup', label: '复诊对比', template: '再体检一次，和上次的病历对比一下。' },
-  { id: 'consult', label: '插件会诊', template: '查一下当前 profile 的插件有没有冲突，包括技能链路。' },
+  { id: 'checkup', label: '体检全部', template: '技能体检' },
+  { id: 'scoped', label: '只看目录', template: '体检这个目录：' },
+  { id: 'single', label: '诊断一个', template: '诊断这个技能：' },
+  { id: 'rewrite', label: '改写工单', template: '简介改写工单：' },
+  { id: 'followup', label: '复诊对比', template: '技能复诊：和上次对比' },
+  { id: 'consult', label: '插件会诊', template: '插件会诊：查冲突' },
 ]
 
 /** 按 id 取模板；未知 id 返回 undefined（面板自己不发明模式）。 */

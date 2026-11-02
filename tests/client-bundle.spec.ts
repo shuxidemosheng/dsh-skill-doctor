@@ -77,9 +77,11 @@ describe('client bundle', () => {
   it('exports apply and inject, and no default', () => {
     const exported = loadBundle()
     expect(typeof exported.apply).toBe('function')
-    // conversation / sessions 用于操作输入框；名字写错会导致整块面板不 apply，
-    // 所以这里锁死名单，改名必须同步改测试（有测试兜底才敢动）。
-    expect(exported.inject).toEqual(['slots', 'conversation', 'sessions'])
+    // 只有 slots。曾加过 conversation / sessions（想做蓝色命令 token），
+    // 实测面板直接消失——cordis 里注入列表任一服务缺失就整体不 apply，
+    // 而这些服务对第三方客户端插件不可见。这条断言是防回归的护栏：
+    // 想再加名字，先用真实客户端确认服务确实会被提供。
+    expect(exported.inject).toEqual(['slots'])
     // Loader 会 unwrapExports，出现 default 会把 inject 丢掉。
     expect('default' in exported).toBe(false)
   })
