@@ -356,7 +356,7 @@ GitHub Actions：
 | `severityThreshold` | `info` | 输出过滤级别 |
 | `includeProviders` | `[]` | 只检查这些 provider |
 | `excludeProviders` | `[]` | 跳过这些 provider |
-| `baseline` | 无 | `auto`（推荐，按 profile 自动维护病历）或病历文件路径（支持 `~`）；配置后报告带「复诊对比」 |
+| `baseline` | `auto`（默认开启） | 病历：`auto` 按 profile 自动维护；`off` 关闭；或指定文件路径（支持 `~`）。默认即带「复诊对比」，无需配置 |
 
 配置非法时插件只打一行 warn 并禁用自己，**不会阻断会话创建**。
 
@@ -364,11 +364,13 @@ GitHub Actions：
 
 体检一次不难，难的是知道“这次比上次好还是坏”。两种用法：
 
-**会话内全自动（推荐插件用户，不需要终端）**：在插件的 `baseline` 配置里写 `auto`，之后每次体检自动存病历、自动和上次对比——第一次建档时报告会说明，从第二次开始报告自带「复诊对比」：
+**默认就开着，不需要任何配置**：每次体检自动存病历、自动和上次对比——第一次建档时报告会说明，从第二次开始自带「复诊对比」。病历按 profile 分文件存在 `~/.dsh/skill-doctor/` 下，是你自己的数据目录，几 KB。
+
+不想要就显式关掉（唯一会写病历的功能随之停用）：
 
 ```yaml
 config:
-  baseline: auto    # 病历按 profile 分文件，存在 ~/.dsh/skill-doctor/ 下
+  baseline: off    # 也可以写具体文件路径，自己管文件
 ```
 
 **CLI 手动（CI / 想自己管文件）**：

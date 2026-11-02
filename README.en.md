@@ -258,7 +258,7 @@ Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usag
 | `severityThreshold` | `info` | Output filter |
 | `includeProviders` | `[]` | Only these providers |
 | `excludeProviders` | `[]` | Skip these providers |
-| `baseline` | none | `auto` (recommended: the record is maintained per profile) or a record file path (supports `~`); when set, reports include a follow-up comparison |
+| `baseline` | `auto` (on by default) | Record: `auto` maintains it per profile; `off` disables it; or a file path (supports `~`). The follow-up comparison works out of the box |
 
 Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
 
@@ -266,11 +266,13 @@ Invalid config makes the plugin log one warning and disable itself — it **neve
 
 One checkup is easy; knowing whether this run is better than the last one is not. Two ways:
 
-**Fully automatic in-session (recommended for plugin users, no terminal needed)**: set `baseline: auto` in the plugin config; every checkup then stores the record and diffs against the previous one automatically. The first run archives ("first record"), from the second on the report carries the follow-up comparison:
+**On by default, nothing to configure**: every checkup stores the record and diffs against the previous one automatically. The first run archives ("first record"), from the second on the report carries the follow-up comparison. Records live per profile under `~/.dsh/skill-doctor/` — your own data directory, a few KB.
+
+To turn it off explicitly (this is the only feature that writes anything besides an explicit description/fix):
 
 ```yaml
 config:
-  baseline: auto    # one record file per profile, under ~/.dsh/skill-doctor/
+  baseline: off    # or a concrete file path if you want to manage the file yourself
 ```
 
 **Manual via CLI (CI / you own the file)**:

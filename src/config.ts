@@ -20,7 +20,10 @@ export interface Config {
   includeProviders?: string[]
   /** 跳过这些 provider。 */
   excludeProviders?: string[]
-  /** 病历文件路径（支持 ~）；配 `auto` 则由插件按 profile 自动维护（会话内全自动复诊）。 */
+  /**
+   * 病历（复诊）配置：缺省即 `auto`——按 profile 自动维护，装好即有复诊，无需配置。
+   * 也接受具体文件路径（支持 ~）或 `off`（显式关闭，不写任何病历）。
+   */
   baseline?: string
 }
 
@@ -34,7 +37,8 @@ export interface ResolvedConfig {
   readonly severityThreshold: Severity
   readonly includeProviders: readonly string[]
   readonly excludeProviders: readonly string[]
-  readonly baseline?: string
+  /** `auto`（默认）/ 文件路径 / `off`。 */
+  readonly baseline: string
 }
 
 const SEVERITIES: readonly Severity[] = ['info', 'warn', 'error']
@@ -103,10 +107,12 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     ? 'info'
     : severity('severityThreshold', raw.severityThreshold)
 
-  let baseline: string | undefined
+  // 默认 auto：复诊是本插件的核心能力，默认关闭等于让绝大多数用户永远发现不了它。
+  // 代价只是往插件自己的数据目录写一份几 KB 的 JSON；不想要就显式写 off。
+  let baseline = 'auto'
   if (raw.baseline !== undefined) {
     if (typeof raw.baseline !== 'string' || raw.baseline.trim().length === 0) {
-      throw new Error('baseline must be a non-empty string (path to the record file)')
+      throw new Error('baseline must be a non-empty string: "auto", "off", or a record file path')
     }
     baseline = raw.baseline.trim()
   }
@@ -134,7 +140,7 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     severityThreshold,
     includeProviders,
     excludeProviders,
-    ...baseline === undefined ? {} : { baseline },
+    baseline,
   }
 }
 

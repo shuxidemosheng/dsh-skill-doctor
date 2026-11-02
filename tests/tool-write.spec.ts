@@ -120,3 +120,41 @@ describe('skill_doctor fix', () => {
     expect(output).toContain('语义问题只能人工改')
   })
 })
+
+describe('baseline defaults (0.10.0)', () => {
+  it('enables the record by default — no config needed', async () => {
+    const prev = process.env.DSH_HOME
+    const home = mkdtempSync(join(tmpdir(), 'default-record-'))
+    tmps.push(home)
+    process.env.DSH_HOME = home
+    try {
+      const { skill } = skillAt('Use when the user asks to demo the default record behavior.')
+      const env = createFakeCtx([{ skill }])
+      // 不传任何配置：resolveConfig(undefined) 即默认 auto。
+      const tool = buildDoctorTool(env.ctx as never, resolveConfig(undefined))
+      const output = String(await tool.execute({} as never, fakeExec()))
+      expect(output).toContain('第一次记录病历')
+      const record = join(home, 'skill-doctor', 'record-default.json')
+      expect(readFileSync(record, 'utf8')).toContain('demo-skill')
+    } finally {
+      process.env.DSH_HOME = prev
+    }
+  })
+
+  it('writes nothing when the user opts out with baseline: off', async () => {
+    const prev = process.env.DSH_HOME
+    const home = mkdtempSync(join(tmpdir(), 'off-record-'))
+    tmps.push(home)
+    process.env.DSH_HOME = home
+    try {
+      const { skill } = skillAt('Use when the user asks to verify the opt-out path.')
+      const env = createFakeCtx([{ skill }])
+      const tool = buildDoctorTool(env.ctx as never, resolveConfig({ baseline: 'off' }))
+      const output = String(await tool.execute({} as never, fakeExec()))
+      expect(output).not.toContain('记录病历')
+      expect(output).not.toContain('复诊对比')
+    } finally {
+      process.env.DSH_HOME = prev
+    }
+  })
+})

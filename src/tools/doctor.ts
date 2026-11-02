@@ -29,7 +29,8 @@ import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown, type ReportOp
 
 /** 病历路径的解析：`auto` 用 profile 专属的默认路径，其余按用户给的路径展开。 */
 function recordPathOf(config: ResolvedConfig, ctx: Context): string | undefined {
-  if (config.baseline === undefined) return undefined
+  // 默认 auto（见 config.ts）：装好即有复诊；`off` 是唯一的关闭方式。
+  if (config.baseline === 'off') return undefined
   return config.baseline === 'auto'
     ? autoRecordPath(profileNameOf(ctx) ?? 'default')
     : expandHome(config.baseline)
