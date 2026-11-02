@@ -245,11 +245,14 @@ describe('mode chips', () => {
     }
   })
 
-  it('writes the Chinese token, not the English command, into the composer', async () => {
+  it('writes an ASCII token into the composer so it can render as a chip', async () => {
     const { MODES } = await import('../src/modes')
-    for (const mode of MODES) {
-      // 中文 token 走引用源识别；写英文命令名就变成"英文 chip"，不是想要的效果。
-      expect(mode.template).toBe(`/${mode.id} `)
+    const { DOCTOR_CANDIDATES } = await import('../src/source')
+    for (const [index, mode] of MODES.entries()) {
+      // dsh 的 TEXT_REF_RE 只认 [\w-]+（JS 的 \w 不含中文），
+      // 所以输入框里必须是 ASCII，否则永远不会变成蓝色 chip。
+      expect(mode.template).toBe(`/${DOCTOR_CANDIDATES[index]!.token} `)
+      expect(/^[a-z][a-z0-9_-]*$/.test(mode.command ?? '')).toBe(true)
     }
   })
 

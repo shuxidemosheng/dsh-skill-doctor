@@ -28,8 +28,9 @@ export interface ModeChip {
 export const MODES: readonly ModeChip[] = DOCTOR_CANDIDATES.map(candidate => ({
   id: candidate.name,
   label: candidate.label,
-  template: `/${candidate.name} `,
-  ...candidate.command === undefined ? {} : { command: candidate.command },
+  // 落 ASCII token 而不是中文名：中文名匹配不上 chip 正则，只能是白色文本。
+  template: `/${candidate.token} `,
+  command: candidate.token,
 }))
 
 /** 按 id 取模板；未知 id 返回 undefined（面板自己不发明模式）。 */

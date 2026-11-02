@@ -25,10 +25,16 @@ export interface DoctorCandidate {
   readonly label: string
   /** 菜单右侧的说明。 */
   readonly description: string
-  /** 提交时替换成哪条斜杠命令；没有则用 `fallback` 的自然语言。 */
-  readonly command?: string
-  /** 没有命令时提交给模型的自然语言。 */
-  readonly fallback?: string
+  /**
+   * 输入框里真正的 token，同时也是命令名（ASCII）。
+   *
+   * 为什么不用中文：dsh 把纯文本认成 chip 用的是
+   * `TEXT_REF_RE = /(^|\s)([/@])([\w-]+)/g`，而 JS 的 `\w` 只有
+   * `[A-Za-z0-9_]`——中文名永远匹配不上，`/体检` 只会是一段白色文本。
+   * 也就是说「中文名」和「蓝色 chip」在现在的 dsh 上互斥。
+   * 选择保住 chip：菜单和说明用中文，输入框里落 ASCII。
+   */
+  readonly token: string
 }
 
 /**
@@ -37,21 +43,21 @@ export interface DoctorCandidate {
  * 名字刻意短：它在输入框里等同"标签"，长了就退化成句子。
  */
 export const DOCTOR_CANDIDATES: readonly DoctorCandidate[] = [
-  { name: '体检', label: '体检全部', description: '查所有技能有没有坏、模型看得到吗', command: 'doctor' },
-  { name: '查目录', label: '只看目录', description: '只查指定目录里的技能', command: 'scope' },
-  { name: '改写', label: '改写工单', description: '为超长简介生成一份改写稿', command: 'rewrite' },
-  { name: '复诊', label: '复诊对比', description: '对照上次结果，看好了还是坏了', command: 'followup' },
-  { name: '诊断', label: '诊断一个', description: '查某个技能为什么没被模型选中', fallback: '诊断这个技能：' },
-  { name: '会诊', label: '插件会诊', description: '查插件有没有把技能配置改坏', fallback: '插件会诊：查冲突' },
+  { name: '体检', label: '体检全部', token: 'doctor', description: '查所有技能有没有坏、模型看得到吗' },
+  { name: '查目录', label: '只看目录', token: 'scope', description: '只查指定目录里的技能' },
+  { name: '改写', label: '改写工单', token: 'rewrite', description: '为超长简介生成一份改写稿' },
+  { name: '复诊', label: '复诊对比', token: 'followup', description: '对照上次结果，看好了还是坏了' },
+  { name: '诊断', label: '诊断一个', token: 'why', description: '查某个技能为什么没被模型选中' },
+  { name: '会诊', label: '插件会诊', token: 'clash', description: '查插件有没有把技能配置改坏' },
 ]
 
 /** 引用源的注册名（`(trigger, name)` 唯一，撞了会抛）。 */
 export const SOURCE_NAME = 'skill-doctor'
 
-/** 去掉可能带的 `/` 前缀，取候选名。 */
+/** 去掉可能带的 `/` 前缀，按 token 或中文名查候选。 */
 function candidateOf(ref: string): DoctorCandidate | undefined {
   const bare = ref.replace(/^\//u, '').trim()
-  return DOCTOR_CANDIDATES.find(candidate => candidate.name === bare)
+  return DOCTOR_CANDIDATES.find(candidate => candidate.token === bare || candidate.name === bare)
 }
 
 /**
@@ -63,9 +69,9 @@ function candidateOf(ref: string): DoctorCandidate | undefined {
  */
 export function serializeRef(ref: string): string {
   const candidate = candidateOf(ref)
-  if (candidate === undefined) return ref
-  if (candidate.command !== undefined) return `/${candidate.command} `
-  return candidate.fallback ?? candidate.name
+  // token 本身就是命令名，所以这里通常是原样返回；查不到候选就不动它，
+  // 免得把用户手写的 `/nature-citation` 这类技能引用改写掉。
+  return candidate === undefined ? ref : `/${candidate.token} `
 }
 
 /** 注册引用的最小接口（只用到 registerSource）。 */
@@ -102,11 +108,16 @@ function buildSource(): Record<string, unknown> {
         .map(candidate => ({ name: candidate.name, description: candidate.description }))
     },
     // 已经打出来的 `/复诊` 也要能被识别成引用（不只是从菜单选）。
-    lexicon: () => DOCTOR_CANDIDATES.map(candidate => candidate.name),
+    // 只有 ASCII token 进 lexicon：中文名不在这个字符集里，放进去也匹配不到。
+    lexicon: () => DOCTOR_CANDIDATES.map(candidate => candidate.token),
     subscribeLexicon: () => () => {},
     // 没有可打开的源文件，点 chip 不做事。
     openReference: () => false,
-    onPick: ({ candidate }: { candidate: { name: string } }) => ({ text: `/${candidate.name} ` }),
+    onPick: ({ candidate }: { candidate: { name: string } }) => {
+      // 菜单项给的是中文名，落进输入框要换成 ASCII token（否则变不成 chip）。
+      const matched = DOCTOR_CANDIDATES.find(entry => entry.name === candidate.name)
+      return { text: `/${matched?.token ?? candidate.name} ` }
+    },
     codec: { serialize: async (ref: string) => serializeRef(ref) },
   }
 }

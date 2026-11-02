@@ -110,16 +110,28 @@ Output is plain text (one node in the flow, no table rendering), so it is trimme
 
 > Why commands are blue chips but panel buttons are not: a chip is dsh's command node and only host-registered commands get one; the panel runs in the webview and can only put text into the composer.
 
-**Chinese entry points: the menu says 「复诊」**. The command system really does pin names to ASCII (`/^[a-z][a-z0-9_-]*$/`), but the composer has **two** slash mechanisms — skill names use a different one: a *reference source* registered via `ctx.inputTriggers.registerSource()`. It only requires a unique `(trigger, name)`; candidate names and descriptions come from the plugin, so Chinese is fine.
+**What the entry points look like: Chinese menu, ASCII tokens**. This is forced by dsh, not a preference:
 
-The plugin registers one source on `/`:
-- type `/` → the menu gains a Chinese group (体检 / 查目录 / 改写 / 复诊 / 诊断 / 会诊);
-- pick one → the composer holds a `/复诊` reference token (same styling as skill names), with room to type arguments;
-- submit → `codec.serialize` swaps it for the real command `/followup`. **Chinese on screen, English on the wire.**
+- the menu column (name + description) comes from the plugin, so Chinese is fine;
+- turning composer text into a blue chip goes through
+  `dsh-client-ui-conversation`'s `TEXT_REF_RE = /(^|\s)([/@])([\w-]+)/g` — and
+  **JS `\w` is `[A-Za-z0-9_]` only**, so a Chinese name never matches. `/体检` stays
+  plain text; `/doctor` becomes a chip.
 
-The six panel buttons write those Chinese tokens (not English commands), so clicking "复诊对比" puts `/复诊 ` in the composer.
+So: **Chinese in the menu, ASCII in the composer.**
 
-> The difference between the two: a command chip's text **is** the command name (no third-party i18n); a reference source's candidates are supplied by the plugin, so the names are free-form. Skills have always used the latter.
+| Menu | Composer | What it does |
+|---|---|---|
+| 体检 | `/doctor` | Check every skill for breakage and visibility |
+| 查目录 | `/scope` | Check one directory only |
+| 改写 | `/rewrite` | Draft a rewrite for an oversized description |
+| 复诊 | `/followup` | Diff against the previous checkup |
+| 诊断 | `/why` | Why one skill is not being picked |
+| 会诊 | `/clash` | Whether a plugin broke the skill config |
+
+These tokens come from a **reference source** registered via `ctx.inputTriggers.registerSource` (the same mechanism as a skill's `/name`), with ASCII names in `lexicon` so they render as real chips; on submit `codec.serialize` hands them to the command — **without the model**.
+
+> If dsh ever widens `TEXT_REF_RE` to `\p{L}`, just switch the candidates' `token` back to Chinese; nothing else changes.
 
 ## Tools
 

@@ -110,7 +110,7 @@ describe('buildCommands', () => {
   /** 每条命令都能跑，且返回非空文本。 */
   const run = async (spec: CommandSpec, input: string): Promise<string> => spec.run(input)
 
-  it('exposes exactly the documented four commands', async () => {
+  it('exposes exactly the documented commands', async () => {
     const { skill } = await loadFixture('good-skill').then(skill => ({ skill }))
     const env = createFakeCtx([{ skill }])
     const specs = buildCommands(env.ctx as never, resolveConfig(undefined))
@@ -167,7 +167,7 @@ describe('buildCommands', () => {
 })
 
 describe('registerCommands', () => {
-  it('registers all four into the command service', async () => {
+  it('registers every command into the command service', async () => {
     const registered: { name?: string; input?: { hint?: string } }[] = []
     const env = createFakeCtx([])
     ;(env.ctx as Record<string, unknown>).get = (name: string) =>

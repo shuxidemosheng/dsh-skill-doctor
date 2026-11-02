@@ -28,6 +28,7 @@ import { clusterFindings } from './clusters.js'
 import { profileNameOf } from './profile-name.js'
 import { collectRuntimeSkills } from './runtime.js'
 import { scanRoots } from './scanner/fs-scan.js'
+import { scanProfile } from './plugins/scan.js'
 import { lintSkills } from './scanner/scan.js'
 import { analyzeTruncation, extractTriggers, triggerLabel } from './tools/report.js'
 import { renderRewriteWorksheet } from './tools/rewrite.js'
@@ -77,6 +78,7 @@ export function plainCheckup(
   results: readonly SkillLintResult[],
   limit: number,
   scopedTo?: readonly string[],
+  heading = '技能体检',
 ): string {
   if (results.length === 0) {
     return scopedTo === undefined || scopedTo.length === 0
@@ -89,7 +91,7 @@ export function plainCheckup(
 
   const lines: string[] = []
   const scope = scopedTo === undefined || scopedTo.length === 0 ? '' : `（只查 ${scopedTo.join('、')}）`
-  lines.push(`技能体检 · ${results.length} 个技能${scope}`)
+  lines.push(`${heading} · ${results.length} 个技能${scope}`)
   lines.push(
     `⛔ 用不了 ${tiers.broken} · ⚠️ 影响大 ${tiers.high} · 💡 影响小 ${tiers.low}`
     + ` · 💡 其他 ${tiers.info} · ✅ 正常 ${tiers.ok}`,
@@ -167,8 +169,10 @@ export function plainFollowUp(diff: BaselineDiff, label: string): string {
 const COMMAND_META = {
   doctor: { description: '体检所有技能', hint: '[目录，留空=全部]' },
   scope: { description: '只体检一个目录', hint: '<目录或 SKILL.md 路径>' },
-  followup: { description: '和上次体检对比', hint: '[目录，留空=全部]' },
   rewrite: { description: '简介改写工单', hint: '<技能名>' },
+  followup: { description: '和上次体检对比', hint: '[目录，留空=全部]' },
+  why: { description: '查某个技能为什么没被选中', hint: '<技能名>' },
+  clash: { description: '查插件有没有改坏技能配置', hint: '[profile 名]' },
 } as const
 
 /**
@@ -254,6 +258,41 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
         return `${worksheet.join('\n')}\n\n写好后用 skill_doctor 工具写入（需要你确认草稿）。`
       },
     },
+    {
+      name: 'why',
+      ...COMMAND_META.why,
+      run: async input => {
+        const name = input.trim()
+        if (name.length === 0) return '用法：/why <技能名>\n例：/why nature-citation'
+        const skills = await collectRuntimeSkills(ctx, { config })
+        const target = skills.find(skill => skill.name === name)
+        if (target === undefined) {
+          const near = skills.map(skill => skill.name).filter(candidate => candidate.includes(name)).slice(0, 5)
+          return `没找到技能 ${name}。${near.length === 0 ? '' : `\n相近的：${near.join('、')}`}`
+        }
+        const single = await lintSkills([target], config)
+        return plainCheckup(single.results, limit, undefined, `技能诊断 · ${name}`)
+      },
+    },
+    {
+      name: 'clash',
+      ...COMMAND_META.clash,
+      run: async input => {
+        const profile = input.trim().length === 0 ? profileNameOf(ctx) ?? 'desktop' : input.trim()
+        const report = await scanProfile(profile)
+        const lines = [`插件检查 · profile ${profile}`]
+        if (report.conflicts.length === 0) {
+          lines.push('没有发现冲突。', '（技能目录被插件改掉这类问题看 /doctor；这里只查插件之间的结构性冲突。）')
+        } else {
+          for (const conflict of report.conflicts.slice(0, 8)) {
+            lines.push(`· [${conflict.severity}] ${conflict.title}`, `  ${conflict.detail}`)
+          }
+          if (report.conflicts.length > 8) lines.push(`· …还有 ${report.conflicts.length - 8} 条`)
+        }
+        if (report.notes.length > 0) lines.push('', `读不到的东西：${report.notes.slice(0, 3).join('；')}`)
+        return lines.join('\n')
+      },
+    }
   ]
 }
 
@@ -310,4 +349,4 @@ export function registerCommands(ctx: Context, config: ResolvedConfig): void {
 }
 
 /** 供测试用：命令名清单。 */
-export const COMMAND_NAMES = ['doctor', 'scope', 'followup', 'rewrite'] as const
+export const COMMAND_NAMES = ['doctor', 'scope', 'followup', 'rewrite', 'why', 'clash'] as const

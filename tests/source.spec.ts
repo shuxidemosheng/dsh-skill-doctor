@@ -12,11 +12,9 @@ describe('doctor candidates', () => {
   it('covers every panel button exactly once', () => {
     // 面板六个按钮与菜单六条候选必须一一对应，否则两条入口会各说各话。
     expect(DOCTOR_CANDIDATES).toHaveLength(MODES.length)
-    for (const mode of MODES) {
-      const matched = DOCTOR_CANDIDATES.filter(candidate =>
-        candidate.command === mode.command
-        && (mode.command !== undefined || candidate.fallback !== undefined))
-      expect(matched.length).toBeGreaterThan(0)
+    for (const [index, mode] of MODES.entries()) {
+      expect(mode.id).toBe(DOCTOR_CANDIDATES[index]!.name)
+      expect(mode.command).toBe(DOCTOR_CANDIDATES[index]!.token)
     }
   })
 
@@ -51,9 +49,17 @@ describe('serializeRef', () => {
     expect(serializeRef('/改写').trim()).toBe('/rewrite')
   })
 
-  it('falls back to natural language for candidates without a command', () => {
-    expect(serializeRef('/诊断')).toContain('诊断这个技能')
-    expect(serializeRef('/会诊')).toContain('插件会诊')
+  it('maps the Chinese name to its ASCII token if someone types it by hand', () => {
+    // 菜单里显示中文，用户可能照着打；转成 token 才能命中命令。
+    expect(serializeRef('/复诊').trim()).toBe('/followup')
+    expect(serializeRef('/体检').trim()).toBe('/doctor')
+  })
+
+  it('keeps every token inside the chip regex dsh requires', () => {
+    for (const candidate of DOCTOR_CANDIDATES) {
+      // TEXT_REF_RE = /(^|\s)([/@])([\w-]+)/g —— 不匹配就永远不会变成蓝色 chip。
+      expect(/^[\w-]+$/.test(candidate.token)).toBe(true)
+    }
   })
 
   it('leaves unknown refs untouched so nothing is silently rewritten', () => {
@@ -120,7 +126,9 @@ describe('registerTriggerSource', () => {
     expect(all.map(item => item.name)).toContain('复诊')
     const filtered = await source.candidates({}, { query: '复' })
     expect(filtered.map(item => item.name)).toEqual(['复诊'])
-    expect(source.lexicon()).toContain('体检')
+    // lexicon 里放的是 ASCII token：编辑器的 chip 正则不认中文。
+    expect(source.lexicon()).toContain('doctor')
+    expect(source.lexicon()).not.toContain('体检')
   })
 
   it('does nothing when the trigger service is missing or already taken', () => {
