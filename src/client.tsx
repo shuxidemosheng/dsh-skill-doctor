@@ -581,16 +581,22 @@ function ModesView(props: { readonly sessionId?: string }): JSX.Element {
                 fontWeight: active ? 600 : 400,
               }}
             >
-              {chip.label}
+              <span style={{ display: 'flex', alignItems: 'baseline', gap: 6, justifyContent: 'space-between' }}>
+                <span>{chip.label}</span>
+                <span style={{ fontSize: 10, opacity: 0.65, fontWeight: 400 }}>
+                  {chip.command === undefined ? '走模型' : `/${chip.command}`}
+                </span>
+              </span>
             </button>
           )
         })}
       </div>
       <div style={{ fontSize: 11, opacity: 0.6, lineHeight: 1.6, paddingTop: 8 }}>
-        选一个功能 → 模板会进入输入框（拿不到输入框权限时会复制到剪贴板）→ 补上路径或技能名 → 回车。
+        点一个功能 → 内容进入输入框（拿不到输入框权限时复制到剪贴板）→ 补上路径或技能名 → 回车。
+        右上角标了 <code style={{ opacity: 0.85 }}>/命令</code> 的由插件直接执行、不经过模型；标「走模型」的会交给模型处理。
         <br />
-        也可以直接打斜杠命令（选中后是蓝色 chip，由插件自己执行、不经过模型）：
-        <code style={{ opacity: 0.85 }}>/doctor</code>、<code style={{ opacity: 0.85 }}>/scope &lt;目录&gt;</code>、<code style={{ opacity: 0.85 }}>/followup</code>、<code style={{ opacity: 0.85 }}>/rewrite &lt;技能名&gt;</code>
+        命令名是英文，因为 dsh 只接受 <code style={{ opacity: 0.85 }}>/[a-z][a-z0-9_-]*</code> 形式的命令名，
+        蓝色 chip 的文字就是命令名本身（中文词条只给内置命令）。
       </div>
       {modeFeedback === null ? null : (
         <div style={{ fontSize: 11, paddingTop: 6, lineHeight: 1.6, color: KIND_COLOR.plugin }}>

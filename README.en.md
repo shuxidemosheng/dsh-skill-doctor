@@ -106,7 +106,11 @@ Four commands ship with the plugin. Type `/` in the composer, pick one — it be
 
 Output is plain text (one node in the flow, no table rendering), so it is trimmed to "what to look at first". For the full report with prescriptions, still ask the model to run `skill_doctor` — both paths share the same scanner.
 
+**Panel buttons map one-to-one to commands**: clicking "复诊对比" puts `/followup ` into the composer (same for the four buttons tagged `/command`); add the argument and press enter. The two tagged "走模型" have no command and go through the model.
+
 > Why commands are blue chips but panel buttons are not: a chip is dsh's command node and only host-registered commands get one; the panel runs in the webview and can only put text into the composer.
+
+**Why the names are English instead of `/复诊`**: dsh pins command names to `/^[a-z][a-z0-9_-]*$/` (anything else is a `TypeError`), and the chip text *is* the command name — only built-in commands carry a `token.<name>` entry in the command dictionary (`/plan` renders as 「计划」), and third-party plugins cannot reach that dictionary. So a Chinese chip is not achievable on the current dsh. The **description** shown in the command list is Chinese, which is what to read when picking one.
 
 ## Tools
 

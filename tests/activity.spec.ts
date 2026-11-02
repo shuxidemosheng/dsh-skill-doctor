@@ -245,10 +245,26 @@ describe('mode chips', () => {
     }
   })
 
-  it('keeps templates that invite the user to finish the sentence', async () => {
+  it('puts a slash command in the composer for every chip that has one', async () => {
     const { MODES } = await import('../src/modes')
-    const scoped = MODES.find(mode => mode.id === 'scoped')!
-    expect(scoped.template.endsWith('：')).toBe(true)
+    for (const mode of MODES) {
+      if (mode.command === undefined) continue
+      // 模板必须就是那条命令（可带尾随空格），否则回车会变成普通消息。
+      expect(mode.template.startsWith(`/${mode.command}`)).toBe(true)
+    }
+    // 没有命令的两条走自然语言（不能以 / 开头，否则会被当成未知命令）。
+    const natural = MODES.filter(mode => mode.command === undefined)
+    expect(natural.length).toBe(2)
+    for (const mode of natural) expect(mode.template.startsWith('/')).toBe(false)
+  })
+
+  it('keeps the command names inside the ASCII rule dsh enforces', async () => {
+    const { MODES } = await import('../src/modes')
+    for (const mode of MODES) {
+      if (mode.command === undefined) continue
+      // dsh: /^[a-z][a-z0-9_-]*$/ —— 中文名注册会被直接拒绝，这也是 chip 只能是英文的原因。
+      expect(/^[a-z][a-z0-9_-]*$/.test(mode.command)).toBe(true)
+    }
   })
 
   it('does not invent templates for unknown ids', async () => {
