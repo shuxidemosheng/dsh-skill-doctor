@@ -129,31 +129,93 @@ let currentScope: string | undefined
  */
 function applyMode(chip: ModeChip, sessionId: string | undefined, ctx?: unknown): void {
   activeMode = chip.id
-  const text = chip.template
-  const inserted = tryInsert(text, sessionId, ctx)
-  modeFeedback = inserted
+  const result = insertText(chip.template, sessionId, ctx)
+  modeFeedback = result === 'service'
     ? `已填入输入框：${chip.label}`
-    : `已复制到剪贴板（${chip.label}）：粘贴到输入框即可`
-  if (!inserted) copyToClipboard(text)
+    : result === 'dom'
+      ? `已填入输入框（DOM 方式）：${chip.label}`
+      : `已复制到剪贴板（${chip.label}）：粘贴到输入框即可`
+  if (result === 'none') copyToClipboard(chip.template)
   emit()
 }
 
-/** 尝试通过会话输入 API 写入；任何一步不可用都返回 false，不抛。 */
-function tryInsert(text: string, sessionId: string | undefined, ctx: unknown): boolean {
+/**
+ * 把文本送进输入框，按优先级尝试三条路，返回实际生效的那条。
+ *
+ * 1. `service`：会话控制器服务（官方插件同款）。需要宿主把服务注入进来，
+ *    我们声明的是 `slots`，所以第三方插件这条路可能拿不到——实测验证。
+ * 2. `dom`：直接对输入框元素派发编辑命令。面板和输入框在同一个 document 里，
+ *    不依赖任何私有 API；只对 contenteditable / textarea 生效。
+ * 3. `none`：两者都不可用，退化为剪贴板。
+ */
+function insertText(text: string, sessionId: string | undefined, ctx: unknown): 'service' | 'dom' | 'none' {
+  if (tryServiceInsert(text, sessionId, ctx)) return 'service'
+  if (tryDomInsert(text)) return 'dom'
+  return 'none'
+}
+
+/** 路线 1：通过注入的会话服务写入。 */
+function tryServiceInsert(text: string, sessionId: string | undefined, ctx: unknown): boolean {
   try {
-    const get = (ctx as { get?: (name: string) => unknown } | undefined)?.get
-    const sessions = typeof get === 'function' ? (get.call(ctx, 'sessions') as {
-      scope?: (id: string) => unknown
-    } | undefined) : undefined
+    const holder = ctx as {
+      sessions?: { scope?: (id: string) => unknown }
+      conversation?: { input?: { for?: (s: unknown) => { insertText?: (t: string, span?: unknown) => boolean } } }
+      get?: (name: string) => unknown
+    } | undefined
+    if (holder === undefined) return false
+    const sessions = holder.sessions ?? (holder.get?.('sessions') as { scope?: (id: string) => unknown } | undefined)
     if (sessions === undefined || typeof sessions.scope !== 'function' || sessionId === undefined) return false
-    const scope = sessions.scope(sessionId) as { get?: (name: string) => unknown } | undefined
-    const conversation = scope?.get?.('conversation') as {
+    const scope = sessions.scope(sessionId) as {
+      get?: (name: string) => unknown
+      conversation?: unknown
+    } | undefined
+    const conversation = (scope?.conversation
+      ?? scope?.get?.('conversation')
+      ?? holder.conversation) as {
       input?: { for?: (s: unknown) => { insertText?: (t: string, span?: unknown) => boolean } }
     } | undefined
-    const insert = conversation?.input?.for?.(scope)?.insertText
+    const api = conversation?.input?.for?.(scope)
+    const insert = api?.insertText
     if (typeof insert !== 'function') return false
-    // 不传 span：让宿主按当前光标插入；返回 false 说明编辑器拒绝了这次写入。
-    return insert.call(conversation?.input, text)
+    return insert.call(api, text) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 路线 2：直接操作输入框 DOM。
+ *
+ * 只碰"看起来像输入框"的元素：contenteditable 或 textarea，且必须可见。
+ * 用 beforeinput 派发更贴近浏览器原生编辑，编辑器（如 Lexical）通常能识别；
+ * 识别不了再退回 execCommand——两者都是标准 DOM 行为，不改宿主结构。
+ */
+function tryDomInsert(text: string): boolean {
+  if (typeof document === 'undefined') return false
+  const candidates = [...document.querySelectorAll<HTMLElement>('[contenteditable="true"], textarea')]
+    .filter(node => node.offsetParent !== null && !node.closest(`#${OVERLAY_HOST_ID}`))
+    .filter(node => !(node as HTMLTextAreaElement).readOnly)
+  const target = candidates[candidates.length - 1]
+  if (target === undefined) return false
+  try {
+    target.focus()
+    if (target instanceof HTMLTextAreaElement) {
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+      setter?.call(target, `${target.value}${text}`)
+      target.dispatchEvent(new Event('input', { bubbles: true }))
+      return target.value.endsWith(text)
+    }
+    const before = target.textContent ?? ''
+    const event = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      inputType: 'insertText',
+      data: text,
+    })
+    target.dispatchEvent(event)
+    if ((target.textContent ?? '') !== before) return true
+    document.execCommand('insertText', false, text)
+    return true
   } catch {
     return false
   }
