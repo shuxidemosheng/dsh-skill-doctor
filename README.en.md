@@ -110,7 +110,16 @@ Output is plain text (one node in the flow, no table rendering), so it is trimme
 
 > Why commands are blue chips but panel buttons are not: a chip is dsh's command node and only host-registered commands get one; the panel runs in the webview and can only put text into the composer.
 
-**Why the names are English instead of `/复诊`**: dsh pins command names to `/^[a-z][a-z0-9_-]*$/` (anything else is a `TypeError`), and the chip text *is* the command name — only built-in commands carry a `token.<name>` entry in the command dictionary (`/plan` renders as 「计划」), and third-party plugins cannot reach that dictionary. So a Chinese chip is not achievable on the current dsh. The **description** shown in the command list is Chinese, which is what to read when picking one.
+**Chinese entry points: the menu says 「复诊」**. The command system really does pin names to ASCII (`/^[a-z][a-z0-9_-]*$/`), but the composer has **two** slash mechanisms — skill names use a different one: a *reference source* registered via `ctx.inputTriggers.registerSource()`. It only requires a unique `(trigger, name)`; candidate names and descriptions come from the plugin, so Chinese is fine.
+
+The plugin registers one source on `/`:
+- type `/` → the menu gains a Chinese group (体检 / 查目录 / 改写 / 复诊 / 诊断 / 会诊);
+- pick one → the composer holds a `/复诊` reference token (same styling as skill names), with room to type arguments;
+- submit → `codec.serialize` swaps it for the real command `/followup`. **Chinese on screen, English on the wire.**
+
+The six panel buttons write those Chinese tokens (not English commands), so clicking "复诊对比" puts `/复诊 ` in the composer.
+
+> The difference between the two: a command chip's text **is** the command name (no third-party i18n); a reference source's candidates are supplied by the plugin, so the names are free-form. Skills have always used the latter.
 
 ## Tools
 

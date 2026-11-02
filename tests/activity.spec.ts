@@ -245,17 +245,12 @@ describe('mode chips', () => {
     }
   })
 
-  it('puts a slash command in the composer for every chip that has one', async () => {
+  it('writes the Chinese token, not the English command, into the composer', async () => {
     const { MODES } = await import('../src/modes')
     for (const mode of MODES) {
-      if (mode.command === undefined) continue
-      // 模板必须就是那条命令（可带尾随空格），否则回车会变成普通消息。
-      expect(mode.template.startsWith(`/${mode.command}`)).toBe(true)
+      // 中文 token 走引用源识别；写英文命令名就变成"英文 chip"，不是想要的效果。
+      expect(mode.template).toBe(`/${mode.id} `)
     }
-    // 没有命令的两条走自然语言（不能以 / 开头，否则会被当成未知命令）。
-    const natural = MODES.filter(mode => mode.command === undefined)
-    expect(natural.length).toBe(2)
-    for (const mode of natural) expect(mode.template.startsWith('/')).toBe(false)
   })
 
   it('keeps the command names inside the ASCII rule dsh enforces', async () => {
