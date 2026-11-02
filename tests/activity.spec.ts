@@ -233,3 +233,26 @@ describe('usage stats (cross-session)', () => {
     expect(skillLoadNames(loaded)).toEqual(['nature-citation'])
   })
 })
+
+describe('mode chips', () => {
+  it('offers every entry point exactly once', async () => {
+    const { MODES, templateOf } = await import('../src/modes')
+    expect(MODES).toHaveLength(6)
+    expect(new Set(MODES.map(mode => mode.id)).size).toBe(6)
+    for (const mode of MODES) {
+      expect(mode.label.length).toBeGreaterThan(0)
+      expect(templateOf(mode.id)).toBe(mode.template)
+    }
+  })
+
+  it('keeps templates that invite the user to finish the sentence', async () => {
+    const { MODES } = await import('../src/modes')
+    const scoped = MODES.find(mode => mode.id === 'scoped')!
+    expect(scoped.template.endsWith('：')).toBe(true)
+  })
+
+  it('does not invent templates for unknown ids', async () => {
+    const { templateOf } = await import('../src/modes')
+    expect(templateOf('nope')).toBeUndefined()
+  })
+})

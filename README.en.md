@@ -91,7 +91,7 @@ so only tool names are shown.
 
 The panel reads the current session window, so **calls that scrolled out are gone**; entries it has seen are kept, so totals never go backwards. The footer says so.
 
-The overlay header has two tabs: **Activity** and **Usage**. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
+The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: six buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation) — click one, it highlights and its request template is put into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
 
 ## Tools
 

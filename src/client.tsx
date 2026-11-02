@@ -12,6 +12,7 @@
  */
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
+import { MODES, templateOf, type ModeChip } from './modes.js'
 import {
   collectActivity,
   currentEntry,
@@ -50,10 +51,17 @@ const BAR_ID = 'skill-doctor-activity-bar'
 // ---------- 模块级状态（两个 React 根共享） ----------
 
 let entries: ActivityEntry[] = []
+/** 当前选中的功能模式；null 表示没选。 */
+let activeMode: string | null = null
+/** 点 chip 之后的反馈（写入成功 / 已复制 / 失败原因），显示在条上一行。 */
+let modeFeedback: string | null = null
 let panelOpen = false
-let panelTab: 'activity' | 'usage' = 'activity'
+let panelTab: 'activity' | 'usage' | 'modes' = 'modes'
 let inConversation = false
 let overlayMounted = false
+
+/** 客户端 ctx（apply 时存下来），chips 需要它去拿会话输入 API。 */
+let clientCtx: unknown
 
 /** 跨会话使用统计；apply 时从 localStorage 载入，之后随调用累加。 */
 let usage: UsageRecord = emptyUsage()
@@ -110,12 +118,62 @@ function pushActivity(next: readonly ActivityEntry[], sessionId: string | undefi
 
 let currentScope: string | undefined
 
+/**
+ * 把模板送进输入框。
+ *
+ * 两条路：
+ *  1. 会话输入 API（`ctx.sessions.scope(id).get('conversation').input.for(scope).insertText`），
+ *     官方语音插件用的是这条路——但第三方插件是否拿得到未经验证；
+ *  2. 退化：写剪贴板 + 明确提示，用户 Cmd/Ctrl+V 即可。
+ * 无论哪条路，模板文字都会显示在反馈行里，用户不会"点了没反应"。
+ */
+function applyMode(chip: ModeChip, sessionId: string | undefined, ctx?: unknown): void {
+  activeMode = chip.id
+  const text = chip.template
+  const inserted = tryInsert(text, sessionId, ctx)
+  modeFeedback = inserted
+    ? `已填入输入框：${chip.label}`
+    : `已复制到剪贴板（${chip.label}）：粘贴到输入框即可`
+  if (!inserted) copyToClipboard(text)
+  emit()
+}
+
+/** 尝试通过会话输入 API 写入；任何一步不可用都返回 false，不抛。 */
+function tryInsert(text: string, sessionId: string | undefined, ctx: unknown): boolean {
+  try {
+    const get = (ctx as { get?: (name: string) => unknown } | undefined)?.get
+    const sessions = typeof get === 'function' ? (get.call(ctx, 'sessions') as {
+      scope?: (id: string) => unknown
+    } | undefined) : undefined
+    if (sessions === undefined || typeof sessions.scope !== 'function' || sessionId === undefined) return false
+    const scope = sessions.scope(sessionId) as { get?: (name: string) => unknown } | undefined
+    const conversation = scope?.get?.('conversation') as {
+      input?: { for?: (s: unknown) => { insertText?: (t: string, span?: unknown) => boolean } }
+    } | undefined
+    const insert = conversation?.input?.for?.(scope)?.insertText
+    if (typeof insert !== 'function') return false
+    // 不传 span：让宿主按当前光标插入；返回 false 说明编辑器拒绝了这次写入。
+    return insert.call(conversation?.input, text)
+  } catch {
+    return false
+  }
+}
+
+/** 剪贴板兜底；环境不支持时静默（反馈行里仍然有完整模板可复制）。 */
+function copyToClipboard(text: string): void {
+  try {
+    void navigator.clipboard?.writeText(text)
+  } catch {
+    /* 无剪贴板权限：模板已经显示在反馈行里 */
+  }
+}
+
 function togglePanel(): void {
   panelOpen = !panelOpen
   emit()
 }
 
-function switchTab(tab: 'activity' | 'usage'): void {
+function switchTab(tab: 'activity' | 'usage' | 'modes'): void {
   panelTab = tab
   emit()
 }
@@ -354,6 +412,57 @@ function UsageView(): JSX.Element {
   )
 }
 
+/** 功能页：六个模式，点一下高亮并把模板送进输入框。 */
+function ModesView(props: { readonly sessionId?: string }): JSX.Element {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const listener = (): void => tick(value => value + 1)
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+    }
+  }, [])
+
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+        {MODES.map(chip => {
+          const active = activeMode === chip.id
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => applyMode(chip, props.sessionId, clientCtx)}
+              title={chip.template}
+              style={{
+                padding: '8px 10px',
+                fontSize: 12,
+                textAlign: 'left',
+                borderRadius: TOKEN.radius,
+                border: `1px solid ${active ? KIND_COLOR.skill : TOKEN.border}`,
+                background: active ? KIND_COLOR.skill : 'transparent',
+                color: active ? '#fff' : 'inherit',
+                cursor: 'pointer',
+                fontWeight: active ? 600 : 400,
+              }}
+            >
+              {chip.label}
+            </button>
+          )
+        })}
+      </div>
+      <div style={{ fontSize: 11, opacity: 0.6, lineHeight: 1.6, paddingTop: 8 }}>
+        选一个功能 → 模板会进入输入框（拿不到输入框权限时会复制到剪贴板）→ 补上路径或技能名 → 回车。
+      </div>
+      {modeFeedback === null ? null : (
+        <div style={{ fontSize: 11, paddingTop: 6, lineHeight: 1.6, color: KIND_COLOR.plugin }}>
+          {modeFeedback}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** 浮层：挂在 body 上，避开槽位容器的 overflow 裁剪。 */
 function ActivityOverlay(): JSX.Element | null {
   const open = useSyncExternalStore(subscribe, () => panelOpen, () => panelOpen)
@@ -411,6 +520,22 @@ function ActivityOverlay(): JSX.Element | null {
         <span style={{ flex: 1 }} />
         <button
           type="button"
+          onClick={() => switchTab('modes')}
+          style={{
+            padding: '2px 8px',
+            fontSize: 11,
+            borderRadius: TOKEN.radius,
+            border: `1px solid ${panelTab === 'modes' ? TOKEN.borderStrong : 'transparent'}`,
+            background: 'transparent',
+            color: 'inherit',
+            cursor: 'pointer',
+            fontWeight: panelTab === 'modes' ? 600 : 400,
+          }}
+        >
+          功能
+        </button>
+        <button
+          type="button"
           onClick={() => switchTab('activity')}
           style={{
             padding: '2px 8px',
@@ -465,7 +590,9 @@ function ActivityOverlay(): JSX.Element | null {
       <div style={{ height: 1, background: TOKEN.border, opacity: 0.6 }} />
 
       <div style={{ overflowY: 'auto', padding: '10px 14px 12px' }}>
-        {panelTab === 'usage' ? (
+        {panelTab === 'modes' ? (
+          <ModesView sessionId={currentScope === undefined ? undefined : currentScope} />
+        ) : panelTab === 'usage' ? (
           <UsageView />
         ) : visible.length === 0 ? (
           <div style={{ fontSize: 12, opacity: 0.65, lineHeight: 1.7 }}>
@@ -514,6 +641,7 @@ function ensureOverlay(): void {
  * @param ctx - 客户端上下文。
  */
 export function apply(ctx: { slots: { inject: (name: string, fn: () => void) => void; register: (options: Record<string, unknown>, component: unknown) => void } }): void {
+  clientCtx = ctx
   // 统计是纯客户端状态：宿主注入完成后立刻从 localStorage 恢复累计值。
   usage = loadUsage(storageOf())
   ensureOverlay()
