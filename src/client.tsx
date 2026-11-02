@@ -547,6 +547,17 @@ function UsageView(): JSX.Element {
   )
 }
 
+/** 面板能看到的客户端服务；只读探测，用来判断"能不能做蓝 token"这条路。 */
+function serviceProbe(): string {
+  const ctx = clientCtx as { conversation?: unknown; sessions?: unknown; commands?: unknown; get?: (name: string) => unknown } | undefined
+  const has = (name: string): string => {
+    const direct = ctx?.[name as 'conversation' | 'sessions' | 'commands']
+    const viaGet = typeof ctx?.get === 'function' ? ctx.get(name) : undefined
+    return direct !== undefined || viaGet !== undefined ? '✓' : '✗'
+  }
+  return `conversation ${has('conversation')} · sessions ${has('sessions')} · commands ${has('commands')}`
+}
+
 /** 功能页：六个模式，点一下高亮并把模板送进输入框。 */
 function ModesView(props: { readonly sessionId?: string }): JSX.Element {
   const [, tick] = useState(0)
@@ -588,6 +599,9 @@ function ModesView(props: { readonly sessionId?: string }): JSX.Element {
       </div>
       <div style={{ fontSize: 11, opacity: 0.6, lineHeight: 1.6, paddingTop: 8 }}>
         选一个功能 → 模板会进入输入框（拿不到输入框权限时会复制到剪贴板）→ 补上路径或技能名 → 回车。
+      </div>
+      <div style={{ fontSize: 10, opacity: 0.5, paddingTop: 4 }}>
+        服务探测：{serviceProbe()}
       </div>
       {modeFeedback === null ? null : (
         <div style={{ fontSize: 11, paddingTop: 6, lineHeight: 1.6, color: KIND_COLOR.plugin }}>
@@ -797,4 +811,12 @@ export function apply(ctx: { slots: { inject: (name: string, fn: () => void) => 
 }
 
 /** 客户端侧依赖的服务。 */
-export const inject = ['slots'] as const
+/**
+ * 客户端依赖的服务。
+ *
+ * `conversation` / `sessions` 是为了操作输入框（插入命令 token、读会话范围）。
+ * cordis 的语义是"服务不在就不 apply"，所以这里若写错名字，整块面板会消失——
+ * 这正是我们把功能页做成"先探测再使用"的原因：探测失败只影响写入方式，
+ * 不影响面板本体。
+ */
+export const inject = ['slots', 'conversation', 'sessions'] as const

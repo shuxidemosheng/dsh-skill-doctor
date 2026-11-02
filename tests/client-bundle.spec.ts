@@ -77,7 +77,9 @@ describe('client bundle', () => {
   it('exports apply and inject, and no default', () => {
     const exported = loadBundle()
     expect(typeof exported.apply).toBe('function')
-    expect(exported.inject).toEqual(['slots'])
+    // conversation / sessions 用于操作输入框；名字写错会导致整块面板不 apply，
+    // 所以这里锁死名单，改名必须同步改测试（有测试兜底才敢动）。
+    expect(exported.inject).toEqual(['slots', 'conversation', 'sessions'])
     // Loader 会 unwrapExports，出现 default 会把 inject 丢掉。
     expect('default' in exported).toBe(false)
   })
