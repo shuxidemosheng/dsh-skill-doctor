@@ -108,7 +108,10 @@ The overlay header has two tabs: **Activity** and **Usage**. Usage is **cross-se
 { "name": "nature-citation" }
 ```
 
-Omit `name` for a full check; `extraRoots` points at directories dsh does not index (for example `~/.claude/skills`).
+Omit `name` for a full check. Two scope parameters, with different semantics:
+
+- `roots` — check **only** these directories (or a single `SKILL.md`). Use it whenever the user names a directory; the report header then says the check was scoped.
+- `extraRoots` — **add** roots on top of the session's visible skills (for duplicate/shadow detection); existing skills stay in the report.
 
 Add `"rewrite": true` for the **rewrite worksheet** mode: without `name`, worksheets for every description-truncated skill (same-prefix skills grouped into a template — one template draft plus per-skill variable parts); with `name`, a single worksheet. A worksheet = hard constraints + verbatim visible/cut text + extracted trigger phrases + a deterministic skeleton — the model fills in the copy, **the user confirms before anything is written**, and a re-run of skill_doctor verifies the fix via the follow-up comparison.
 

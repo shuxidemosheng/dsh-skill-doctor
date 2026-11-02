@@ -68,7 +68,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       + 'The multi-skill report also groups findings by root cause (many skills hitting one rule is usually one template) and states which dsh version its thresholds were calibrated against. '
       + 'With config key `baseline` set to `auto` (recommended: the record is maintained automatically per profile) or to a file path written by the CLI via --save, the report opens with a follow-up comparison against the last checkup — what improved, what is untouched, what regressed — and the current state is stored back as the new record. '
       + 'With `rewrite: true`, return a description-rewrite worksheet (constraints + verbatim visible/cut text + extracted triggers + a skeleton draft) instead of a diagnosis; the model fills in the copy, the user confirms before anything is written — never write the draft yourself and never skip the confirmation. '
-      + 'Use this first when a skill does not appear, does not respond, or seems ignored. By default it only reads files; it writes in exactly three cases, each with backup and rollback: its own record JSON when `baseline` is configured, the description line when called with `setDescription` (only after the user confirmed that exact text), and byte-level BOM/CRLF when called with `fix: true`. It never rewrites semantic content on its own. '
+      + 'When the user names a directory, pass it as `roots` so the report covers exactly that scope; omitting it checks every skill visible to the session. Use this first when a skill does not appear, does not respond, or seems ignored. By default it only reads files; it writes in exactly three cases, each with backup and rollback: its own record JSON when `baseline` is configured, the description line when called with `setDescription` (only after the user confirmed that exact text), and byte-level BOM/CRLF when called with `fix: true`. It never rewrites semantic content on its own. '
       + 'The tool result is already a complete, user-ready Markdown report: reply with it verbatim (at most one short lead-in sentence of your own). '
       + 'Do NOT summarize it, do NOT rebuild it as your own tables, and do NOT drop sections — the prescription lines, the follow-up comparison, the calibration note and the technical appendix are part of the diagnosis, not decoration. '
       + 'Never paste it inside a code block or quote it as raw text.',
@@ -77,7 +77,12 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       extraRoots: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Additional skill roots to scan for duplicate/shadowed names (supports ~).',
+        description: 'Additional skill roots to scan for duplicate/shadowed names (supports ~). Additive: session skills stay in the report.',
+      },
+      roots: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Restrict the check to these directories or SKILL.md files (supports ~). PASS THIS whenever the user names a directory ("check D:////skills") — without it the scan covers every skill visible to the session and the report will not match what was asked. Scoped reports say so in the header.',
       },
       rewrite: {
         type: 'boolean',
@@ -105,12 +110,23 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       const cwd = exec.agent === undefined
         ? undefined
         : await ctx.workingDirectory.ensure(exec.agent, exec.signal)
-      const skills = await collectRuntimeSkills(ctx, {
-        ...cwd === undefined ? {} : { cwd },
-        ...exec.agent === undefined ? {} : { scope: exec.agent },
-        signal: exec.signal,
-        config,
-      })
+      // 两种范围语义必须分开：roots = 只查这些（用户点名了目录），
+      // extraRoots = 在会话可见技能之外再补充（查同名遮蔽时用）。
+      const scopedTo = args.roots !== undefined && args.roots.length > 0 ? args.roots : undefined
+      let skills: SkillInput[]
+      let scopeIssues: readonly string[] = []
+      if (scopedTo !== undefined) {
+        const scanned = await scanRoots(scopedTo, config.maxFileBytes)
+        skills = [...scanned.skills]
+        scopeIssues = scanned.issues
+      } else {
+        skills = await collectRuntimeSkills(ctx, {
+          ...cwd === undefined ? {} : { cwd },
+          ...exec.agent === undefined ? {} : { scope: exec.agent },
+          signal: exec.signal,
+          config,
+        })
+      }
       if (args.extraRoots !== undefined && args.extraRoots.length > 0) {
         const extra = await scanRoots(args.extraRoots, config.maxFileBytes)
         skills.push(...extra.skills)
@@ -216,6 +232,8 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         maxDescriptionLength: config.maxDescriptionLength,
         dshVersion: await readDshVersion(),
       } as Writable<ReportOptions>
+      if (scopedTo !== undefined) reportOptions.scopedTo = scopedTo
+      if (scopeIssues.length > 0) reportOptions.scopeIssues = scopeIssues
       if (recordPath !== undefined) {
         const follow = await followUp(config, recordPath, result)
         if (follow.diff !== undefined && follow.label !== undefined) {

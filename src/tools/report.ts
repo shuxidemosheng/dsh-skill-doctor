@@ -39,6 +39,10 @@ export interface ReportOptions {
   readonly baselineFirstRecord?: boolean
   /** 本次体检已写回的病历路径；写失败则没有这个字段。 */
   readonly recordSaved?: string
+  /** 用户点名了目录（roots）：报告必须写明"只查了这些"，否则会被误读成全量体检。 */
+  readonly scopedTo?: readonly string[]
+  /** 扫描指定范围时遇到的问题（路径不存在等），放文末技术细节。 */
+  readonly scopeIssues?: readonly string[]
 }
 
 function limitOf(options: ReportOptions): number {
@@ -565,6 +569,16 @@ function followUpSection(diff: BaselineDiff, label: string): string[] {
   return lines
 }
 
+/** 范围声明：只在用户点名了目录时出现，避免把"只查了 4 个"读成"全量只有 4 个"。 */
+function scopeNotice(options: ReportOptions): string[] {
+  if (options.scopedTo === undefined || options.scopedTo.length === 0) return []
+  const roots = options.scopedTo.map(root => `\`${root}\``).join('、')
+  return [
+    `> 🎯 本次只检查了指定范围：${roots}。会话里的其他技能没有参与——要看全部，去掉目录再跑一次。`,
+    '',
+  ]
+}
+
 /**
  * 病历回执（复诊章节之外的状态行）：
  * - 第一次建档：解释"这次为什么没有对比"；
@@ -595,6 +609,15 @@ function recordSection(options: ReportOptions): string[] {
 function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportOptions): string {
   const total = result.results.length
   if (total === 0) {
+    if (options.scopedTo !== undefined && options.scopedTo.length > 0) {
+      return [
+        '# Skill Doctor：技能体检报告',
+        '',
+        `在指定范围里没有找到技能：${options.scopedTo.map(root => `\`${root}\``).join('、')}。`,
+        '',
+        '确认目录里每个技能都有自己的 `SKILL.md`（`<root>/<skill>/SKILL.md`，或直接把某个 `SKILL.md` 作为范围）。',
+      ].join('\n')
+    }
     return [
       '# Skill Doctor：技能体检报告',
       '',
@@ -640,6 +663,8 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
     `- ✅ 没问题：${ok.length}`,
     '',
   )
+
+  lines.push(...scopeNotice(options))
 
   // 复诊对比紧跟体检分布：刚修完的人第一眼想看的是“好了多少”。
   if (options.baselineDiff !== undefined && options.baselineLabel !== undefined) {
@@ -776,6 +801,7 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
     },
     ...options.dshVersion === undefined ? {} : { calibration: options.dshVersion },
     ...options.recordSaved === undefined ? {} : { recordSaved: options.recordSaved },
+    ...options.scopedTo === undefined ? {} : { scopedTo: options.scopedTo },
     results: result.results.map(skill => ({
       name: skill.skill.name,
       provider: skill.skill.provider,

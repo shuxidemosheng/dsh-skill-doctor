@@ -364,6 +364,27 @@ export const CASES = [
     expect: { exitCode: 0, tool: 'skill_doctor' },
   },
   {
+    id: 'D5',
+    group: 'D',
+    title: '范围：用户点名目录时只查该目录，并如实声明范围',
+    // 回归：真实用户说"查 D://...//test-skills"，模型没传范围参数，
+    // 工具只能把该目录追加进来，结果扫了 42 个技能——报告与提问不符。
+    task: '只体检 ~/.claude/skills 这个目录下的技能，不要看别的地方。',
+    setup: async () => ({ skillDirs: [REAL_SKILL_ROOT] }),
+    expect: {
+      exitCode: 0,
+      tool: 'skill_doctor',
+      custom: async ({ finalText }) => {
+        const text = String(finalText ?? '')
+        const failures = []
+        if (!text.includes('本次只检查了指定范围')) {
+          failures.push('报告没有声明"只检查指定范围"：模型很可能没传 roots，扫了全量技能')
+        }
+        return failures
+      },
+    },
+  },
+  {
     id: 'D4',
     group: 'D',
     title: '可用性：改写工单——诊断之后直接给改写材料，不越权写文件',

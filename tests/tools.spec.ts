@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -281,5 +281,60 @@ describe('skill_doctor', () => {
     expect(output).toMatch(/影响：大/)
     expect(output).toMatch(/分段引用/)
     expect(firstScreen(output)).toMatch(/只能看到简介的前 60 字|模型只能看到前 60 字/)
+  })
+})
+
+describe('scoped scan (roots)', () => {
+  it('checks only the named directory and says so in the report', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scoped-'))
+    try {
+      const a = join(dir, 'alpha-skill')
+      const b = join(dir, 'beta-skill')
+      mkdirSync(a)
+      mkdirSync(b)
+      writeFileSync(join(a, 'SKILL.md'), '---\nname: alpha-skill\ndescription: Use when testing the scoped scan with alpha.\n---\n\n# a\n', 'utf8')
+      writeFileSync(join(b, 'SKILL.md'), '---\nname: beta-skill\ndescription: Use when testing the scoped scan with beta.\n---\n\n# b\n', 'utf8')
+
+      // 会话里还有一个技能：不能被算进这次 scoped 体检。
+      const outside = await loadFixture('good-skill')
+      const env = createFakeCtx([{ skill: outside }])
+      const tool = buildDoctorTool(env.ctx as never, resolveConfig(undefined))
+      const output = String(await tool.execute({ roots: [dir] } as never, fakeExec()))
+
+      expect(output).toContain('一共检查了 2 个技能')
+      expect(output).toContain('本次只检查了指定范围')
+      expect(output).toContain('alpha-skill')
+      expect(output).toContain('beta-skill')
+      expect(output).not.toContain('good-skill')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts a single SKILL.md path as the scope', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scoped-file-'))
+    try {
+      const file = join(dir, 'SKILL.md')
+      writeFileSync(file, '---\nname: solo-skill\ndescription: Use when testing a single file scope.\n---\n\n# s\n', 'utf8')
+      const env = createFakeCtx([])
+      const tool = buildDoctorTool(env.ctx as never, resolveConfig(undefined))
+      const output = String(await tool.execute({ roots: [file] } as never, fakeExec()))
+      expect(output).toContain('一共检查了 1 个技能')
+      expect(output).toContain('solo-skill')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('explains an empty scope instead of reporting zero healthy skills', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scoped-empty-'))
+    try {
+      const env = createFakeCtx([])
+      const tool = buildDoctorTool(env.ctx as never, resolveConfig(undefined))
+      const output = String(await tool.execute({ roots: [dir] } as never, fakeExec()))
+      expect(output).toContain('在指定范围里没有找到技能')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
