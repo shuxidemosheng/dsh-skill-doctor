@@ -25,7 +25,10 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated. Truncated descriptions get a **rewrite worksheet** (trigger skeleton + budget): the model drafts, you confirm before it is written — the loop from diagnosis to fix stays closed.
 - **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
 - **Consults across layers.** "0 skills" does not mean the skills broke — the plugin report lists every patch that touched the skill chain (who → which entry → which key), and the skill report points back at the plugin layer when it comes up empty.
+- **Usable straight from the composer, without the model.** Type `/` for a group of Chinese entries (体检 / 查目录 / 改写 / 复诊 / 诊断 / 会诊); picking one yields a blue chip and Enter runs it locally — fast, and nothing gets reworded in transit. The six panel buttons write these same commands.
 - **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
+- **Keeps a record, so checkups can be compared.** Run it again after fixing 11 oversized descriptions and the report should not still read "2 left" — it diffs against the last record and tells you "11 fixed, 1 new". On by default, no configuration.
+- **Shows which skills the model never uses.** The panel's Usage tab ranks skills by load count across sessions — the dynamic evidence static checks cannot give you.
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
 - **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
@@ -36,7 +39,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending `@0.7.0` if you prefer.
+That installs the latest version; pin it by appending a version, e.g. `@0.13.2`.
 
 Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 
@@ -46,7 +49,7 @@ After that just talk to it — no need to memorize tool names:
 
 ## Usage
 
-Three real situations, one sentence each.
+**The fastest path is the slash command**: type `/`, pick an entry (the menu is Chinese), add a path or skill name and press Enter — it runs locally, not through the model. The three situations below fit talking to the model instead, letting it pick the tool.
 
 **"I suspect a skill never takes effect"**
 
@@ -91,47 +94,41 @@ so only tool names are shown.
 
 The panel reads the current session window, so **calls that scrolled out are gone**; entries it has seen are kept, so totals never go backwards. The footer says so.
 
-The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: six buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation) — click one, it highlights and its request template is put into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
+The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: six buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation) — click one, it highlights and puts the matching `/command ` into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
 
 ## Slash commands (the fastest entry point in the client)
 
-Four commands ship with the plugin. Type `/` in the composer, pick one — it becomes a **blue command chip**; add the argument inline and press enter. They run **without the model**, so they are instant and cannot be reworded:
-
-| Command | What it does | Example |
-|---|---|---|
-| `/doctor` | Plain-text checkup summary: tier counts, common root cause, cut-off triggers | `/doctor` or `/doctor D:/skills` |
-| `/scope` | Check one directory (or a single `SKILL.md`) | `/scope D:/skills` |
-| `/followup` | Follow-up diff against the last record | `/followup` |
-| `/rewrite` | Description rewrite worksheet (budget + cut triggers + skeleton) | `/rewrite nature-alpha` |
-
-Output is plain text (one node in the flow, no table rendering), so it is trimmed to "what to look at first". For the full report with prescriptions, still ask the model to run `skill_doctor` — both paths share the same scanner.
-
-**Panel buttons map one-to-one to commands**: clicking "复诊对比" puts `/followup ` into the composer (same for the four buttons tagged `/command`); add the argument and press enter. The two tagged "走模型" have no command and go through the model.
-
-> Why commands are blue chips but panel buttons are not: a chip is dsh's command node and only host-registered commands get one; the panel runs in the webview and can only put text into the composer.
-
-**What the entry points look like: Chinese menu, ASCII tokens**. This is forced by dsh, not a preference:
-
-- the menu column (name + description) comes from the plugin, so Chinese is fine;
-- turning composer text into a blue chip goes through
-  `dsh-client-ui-conversation`'s `TEXT_REF_RE = /(^|\s)([/@])([\w-]+)/g` — and
-  **JS `\w` is `[A-Za-z0-9_]` only**, so a Chinese name never matches. `/体检` stays
-  plain text; `/doctor` becomes a chip.
-
-So: **Chinese in the menu, ASCII in the composer.**
+Six commands ship with the plugin. Type `/` — the menu gains a Chinese group; pick one and it becomes a **blue chip** in the composer, add the argument and press enter. They run **without the model**, so they are instant and cannot be reworded:
 
 | Menu | Composer | What it does |
 |---|---|---|
-| 体检 | `/doctor` | Check every skill for breakage and visibility |
-| 查目录 | `/scope` | Check one directory only |
-| 改写 | `/rewrite` | Draft a rewrite for an oversized description |
+| 体检 | `/doctor` | Check every skill for breakage and visibility, merging repeated findings into one cause |
+| 查目录 | `/scope <dir>` | Check only the directory you name |
+| 改写 | `/rewrite <skill>` | Draft a rewrite for an oversized description, with budget and cut-off triggers |
 | 复诊 | `/followup` | Diff against the previous checkup |
-| 诊断 | `/why` | Why one skill is not being picked |
-| 会诊 | `/clash` | Whether a plugin broke the skill config |
+| 诊断 | `/why <skill>` | Why one skill is not being picked, with a concrete fix |
+| 会诊 | `/clash` | Whether a plugin broke the skill-directory config |
 
-These tokens come from a **reference source** registered via `ctx.inputTriggers.registerSource` (the same mechanism as a skill's `/name`), with ASCII names in `lexicon` so they render as real chips; on submit `codec.serialize` hands them to the command — **without the model**.
+Output is plain text (one node in the flow, no Markdown tables), so it is trimmed to "what to look at first":
 
-> If dsh ever widens `TEXT_REF_RE` to `\p{L}`, just switch the candidates' `token` back to Chinese; nothing else changes.
+```text
+技能体检 · 4 个技能（只查 D://skills）
+⛔ 用不了 0 · ⚠️ 影响大 3 · 💡 影响小 0 · 💡 其他 0 · ✅ 正常 1
+
+共性问题（先改这里最划算）
+· 简介太长，后半段模型看不到：3 个（占 75%）；名字都以 nature- 开头，多半同一套模板
+
+模型看不到部分触发说法（3 个）
+· nature-alpha（565 字）被切掉：分段引用、自动给出引用
+```
+
+For the full report with prescriptions, still ask the model to run `skill_doctor` — both paths share the same scanner.
+
+**Why the menu is Chinese but the composer is ASCII**: the menu column comes from the plugin, so it has no character-set limit; turning composer text into a chip goes through dsh's `TEXT_REF_RE = /(^|\s)([/@])([\w-]+)/g`, and **JS `\w` is `[A-Za-z0-9_]` only**, so a Chinese name never matches. A Chinese chip is therefore impossible on the current dsh — this release keeps the chip and puts Chinese in the menu. The tokens come from a **reference source** registered via `ctx.inputTriggers.registerSource` (the same mechanism as a skill's `/name`), and are handed to the command verbatim on submit.
+
+Panel buttons write these same six tokens: clicking 复诊对比 puts `/followup ` into the composer.
+
+> If dsh ever widens that regex to `\p{L}`, switch the candidates' `token` back to Chinese in `src/source.ts`; nothing else changes.
 
 ## Tools
 
@@ -175,6 +172,8 @@ Per-rule verbose mode with rule IDs inline, grouped into "must fix / truncated /
 | `rules?` | Run only these rules, e.g. `["SD003","SD004"]` |
 | `severity?` | `info` / `warn` / `error`, defaults to config |
 | `extraRoots?` | Extra roots, used for shadowing detection |
+| `setDescription?` | Write a confirmed description draft into the skill's frontmatter line (requires `name`) |
+| `fix?` | Apply the byte-level fixes only (BOM / CRLF), with backup and rollback (requires `name`) |
 | `format?` | `markdown` (default) or `json` |
 
 ### `skill_explain`
@@ -357,7 +356,7 @@ Capability boundaries, not omissions:
 
 - **Which plugin owns a tool** — the registry has no owner field. `schemas()` gives every name but no provenance, so a collision can only be reported as suspected.
 - **Why a plugin failed** — the runtime snapshot projects the fiber phase, not the error, and dsh writes no startup log to disk.
-- **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `extraRoots` at the directory to scan files directly.
+- **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `roots` at that directory to scan files directly.
 - **Whether a skill is well written** — not judged. Auto-fix covers two byte-level rules only.
 - **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
 - **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
@@ -383,7 +382,7 @@ If it is listed, suspect a tool-name conflict — when one of the four names is 
 
 **The report shows 0 or too few skills**
 
-`skill_doctor` only sees the current dsh view. To scan directories dsh does not index (`~/.claude/skills`), pass `extraRoots` explicitly.
+`skill_doctor` only sees the current dsh view. To check just a directory dsh does not index (`~/.claude/skills`), pass `roots` (a scope, not an addition).
 
 **"runtime state not checked" in the plugin report**
 
@@ -399,18 +398,42 @@ Invalid config disables the plugin on purpose, so a bad config cannot block the 
 2. `ctx.skills.get(name)` for the full body, proving it really resolves
 3. When `path` is local, the raw `SKILL.md` is read once (read-only) for frontmatter/reference/encoding checks
 4. Remote and virtual skills have no local path, so file-level rules are skipped
-5. `extraRoots` only feeds "same-name candidate" hints; the registry result stays authoritative
+5. Two scope parameters with different semantics: `roots` **restricts** the scan to those directories (use it when the user names one), `extraRoots` **adds** roots on top of the session skills (for shadow detection)
+6. File-level checks are read-only; there are exactly three write paths (`baseline` record JSON, `setDescription` for the confirmed line, `fix` for BOM/CRLF), each with a `.bak` and verification rollback
 
 It **never executes** a skill's scripts, **never modifies** a file (except the CLI `--fix`), and **never sends** skill content over the network.
+
+## How it relates to similar plugins
+
+Three kinds of skill-adjacent plugins exist, and they answer different questions — they compose well:
+
+- **Managers** (browse, search, import/export, delete skills): "where are my skills, how do I add or remove one".
+- **Usage boards** (skill scoreboards, call-count rankings): "how often is it used". This plugin's panel counts loads too, but as evidence for diagnosis, not as a long-term dashboard.
+- **Plugin auditors** (ecosystem scoring, route auth, pre-install gating): "is this plugin safe, can I install it".
+
+This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. Safety heuristics are limited to SD012, and pre-install gating is deliberately out of scope (that belongs to precheck-style plugins).
+
+## Roadmap
+
+- ✅ Prescription tiers (auto-fixable / one command / human only)
+- ✅ Plugin runtime checkup (fiber phase + tool registry cross-reference)
+- ✅ In-session activity panel + cross-session usage stats
+- ✅ Record and follow-up (`baseline: auto`, on by default)
+- ✅ Root-cause grouping, rule-threshold calibration against the dsh version
+- ✅ Skill × plugin consultation (`PL006`)
+- ✅ Rewrite worksheet + confirmed writes (`setDescription`)
+- ✅ Scope parameter, slash commands and the Chinese menu
+- ⬜ Rule documentation site and capability registry
+- ⬜ `skill_ab`: run the same prompt with and without a skill, compare tokens, latency and output
 
 ## Development
 
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client)
-npm test          # 95 tests
+npm test          # 226 tests
 npm run smoke
-npm run e2e       # real dsh headless, group A
+npm run e2e:all   # real dsh headless, all groups
 ```
 
 After changing the panel, run `npm run build` and restart dsh. `tests/client-bundle.spec.ts` checks the bundle shell, exports and slot registration; the visuals still need human eyes.
