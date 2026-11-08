@@ -32,6 +32,7 @@ import { scanProfile } from './plugins/scan.js'
 import { lintSkills } from './scanner/scan.js'
 import { analyzeTruncation, extractTriggers, triggerLabel } from './tools/report.js'
 import { buildProvenance, provenancePlainLines } from './tools/provenance.js'
+import { announcementPlainLine, buildAnnouncement, shouldShowAnnouncement } from './tools/announcement.js'
 import { renderRewriteWorksheet } from './tools/rewrite.js'
 import type { ProvenanceView, SkillInput, SkillLintResult, WinnerInfo } from './types.js'
 
@@ -103,6 +104,11 @@ export function plainCheckup(
     `⛔ 用不了 ${tiers.broken} · ⚠️ 影响大 ${tiers.high} · 💡 影响小 ${tiers.low}`
     + ` · 💡 其他 ${tiers.info} · ✅ 正常 ${tiers.ok}`,
   )
+
+  // 目录预算：几个技能的小报告不显示这一行，避免挤掉首屏、也不让已发布的
+  // 「示例输出」配图作废。数据直接从 results 派生，不新增参数与 registry 往返。
+  const announcement = buildAnnouncement(results.map(item => item.skill))
+  if (shouldShowAnnouncement(announcement)) lines.push(announcementPlainLine(announcement))
 
   // 来源与遮蔽放在共性问题之前：先看这批技能来自哪里、有没有同名被遮蔽，
   // 再判断「13 个超长是不是一个模板问题」。纯文本不能用表格，所以是缩进列表。

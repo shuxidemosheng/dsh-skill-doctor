@@ -230,7 +230,7 @@ Explains why a skill is missing, never selected, or failing to load: winning pro
 | SD009 | warn | same name from multiple roots/providers, may be shadowed |
 | SD010 | warn | invocation field is not a boolean (incl. legacy camelCase) |
 | SD011 | info | skill name too long (>64) |
-| SD012 | warn | suspicious-instruction heuristics: ignore prior instructions, leak credentials, hidden Unicode, long base64 |
+| SD012 | warn | suspicious-instruction heuristics: ignore prior instructions, leak credentials, hidden Unicode, raw ESC, Unicode tag characters, download-piped-into-shell, long base64 |
 | SD013 | info | file starts with a UTF-8 BOM |
 | SD014 | info | file uses CRLF |
 | SD015 | warn | resource reference contains path traversal |
@@ -271,6 +271,18 @@ Each write is preceded by a `<file>.bak` backup and followed by a re-lint with t
 **Deliberately not fixed**: rewriting a description, choosing between shadowed skills, deciding whether a suspicious instruction is malicious. There is no single right answer. The report lists every rule that fired but was skipped.
 
 Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usage/read error.
+
+### Pre-install self-check (no automatic blocking)
+
+Before installing new skills, run the check manually against the directory you are about to import:
+
+```bash
+npx --package dsh-skill-doctor dsh-skill-lint <candidate-dir> --json --warn-as-error
+```
+
+`--json` gives machine-readable `ok / summary / findings`, and `--warn-as-error` makes warnings fail too; exit code `1` can drive a script that decides whether to continue. SD012 flags raw ESC, invisible Unicode tag characters and download-piped-straight-into-a-shell forms, all as `warn` heuristics: a skill that teaches `curl` will also match, and a hit is not a malware verdict.
+
+**You start this check yourself.** The plugin does not hook the dsh install flow, refuse a write, or delete files. Community "audit before install, refuse on a blocking finding" features require the plugin to own the write path; this plugin is a read-only diagnostic and ships no installer. That is why this does not contradict "pre-install gating is out of scope": the gate lives in the command line, not in the plugin.
 
 ```yaml
 - uses: actions/setup-node@v4
@@ -360,6 +372,14 @@ Fields are mapped on import: `when_to_use` / `whenToUse` -> `whenToUse`, `disabl
 
 > The third-party subpath `name: dsh-skill-doctor/compat` has been verified in a real dsh desktop build: the plugin page shows two component rows, both running. That validates loading and fibers, not the exact provider/source values imported skills get inside a real `/doctor` report. If the second row misbehaves in your environment, check the load error in devtools first.
 
+### Announcement budget (a new report metric)
+
+dsh does not hand the model skill bodies; it first injects a compact first-layer catalogue with only `name` / `description` / `whenToUse` per skill. That catalogue stays in context, so its **total length** is a budget: every skill can pass individually while dozens of them together push trailing entries out, which shows up as "installed but never triggers". Per-skill rules (including SD004's 500-char truncation) cannot see this aggregate problem. It only became worth measuring after the second row mounted roughly 50 external skills.
+
+Once the catalogue reaches ten skills, or half the reference budget in characters, the report gains an "Announcement budget" section with the participating skill count, measured characters and a rough token estimate; JSON always carries an `announcement` field. Small plain-text reports stay byte-identical, so the published "example output" screenshots are unaffected. This section is display-only: **no Finding**, no baseline entry, no change to `ok` or exit codes.
+
+> **The 8000-character reference is not a known dsh threshold.** It comes from a comment in the community plugin `dsh-skill-hub` (described as Codex's hard cap for the initial skill list). We found no dsh documentation confirming the same value, and have not reproduced "trailing entries get truncated" in a real session. So this reports measured numbers only and never declares the budget exceeded; `referenceCalibrated: false` in JSON says the same thing.
+
 ## Record & follow-up
 
 One checkup is easy; knowing whether this run is better than the last one is not. Two ways:
@@ -414,6 +434,7 @@ Capability boundaries, not omissions:
 - **Why a plugin failed** — the runtime snapshot projects the fiber phase, not the error, and dsh writes no startup log to disk.
 - **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `roots` at that directory to scan files directly.
 - **Whether a skill is well written** — not judged. Auto-fix covers two byte-level rules only.
+- **No install interception** — the plugin hooks no install action and never refuses a write because of a rule; use the CLI pre-install self-check above if you want a gate. The announcement budget also reports measured numbers only, without an exceeded verdict.
 - **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
 - **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
 - **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
@@ -493,7 +514,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 261 tests
+npm test          # 285 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

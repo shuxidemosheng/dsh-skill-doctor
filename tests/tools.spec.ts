@@ -370,3 +370,18 @@ describe('provenance in tool reports', () => {
     expect(parsed.results.every(item => Array.isArray(item.findings))).toBe(true)
   })
 })
+
+describe('announcement in tool JSON output', () => {
+  it('always exposes the measured budget with an uncalibrated reference', async () => {
+    const env = await envWith('good-skill')
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', { format: 'json' }))
+    const parsed = JSON.parse(output) as {
+      announcement: { chars: number; referenceCalibrated: boolean }
+      results: { findings: unknown[] }[]
+    }
+    expect(parsed.announcement.chars).toBeGreaterThan(0)
+    expect(parsed.announcement.referenceCalibrated).toBe(false)
+    expect(parsed.results.every(item => Array.isArray(item.findings))).toBe(true)
+  })
+})

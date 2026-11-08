@@ -14,6 +14,9 @@ import { clusterFindings, clusterHint, type RuleCluster } from '../clusters.js'
 import { RULES } from '../scanner/rules.js'
 import type { Finding, ProvenanceView, ScanResult, Severity, SkillLintResult } from '../types.js'
 import { provenanceJson, provenanceMarkdownLines } from './provenance.js'
+import {
+  announcementJson, announcementMarkdownLines, buildAnnouncement, shouldShowAnnouncement,
+} from './announcement.js'
 import { calibrationNote, calibrationWarning, type DshVersionInfo } from '../version-check.js'
 import { prescribeKind, prescriptionOf, prescriptionLine } from './prescriptions.js'
 
@@ -429,6 +432,9 @@ function renderTechnicalMarkdown(result: ScanResult, limit: number, options: Rep
     return lines.join('\n')
   }
 
+  const announcement = buildAnnouncement(result.results.map(item => item.skill))
+  if (shouldShowAnnouncement(announcement)) lines.push(...announcementMarkdownLines(announcement))
+
   if (options.provenance !== undefined) lines.push(...provenanceMarkdownLines(options.provenance))
 
   if (blocking.length > 0) {
@@ -686,6 +692,10 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
     lines.push(...recordSection(options))
   }
 
+  // 目录预算：只在目录变大时显示，小报告保持逐字不变。
+  const announcement = buildAnnouncement(result.results.map(item => item.skill))
+  if (shouldShowAnnouncement(announcement)) lines.push(...announcementMarkdownLines(announcement))
+
   // 来源与遮蔽：0.14.0 起外部技能也能挂进目录，先交代它们来自哪里、
   // 有没有同名被遮蔽，再看下面的共性问题与逐条处方。
   if (options.provenance !== undefined) lines.push(...provenanceMarkdownLines(options.provenance))
@@ -817,6 +827,8 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
     ...options.scopedTo === undefined ? {} : { scopedTo: options.scopedTo },
     // 机器可读的来源分组；刻意放在 findings 之外，不扰动 baseline / CI 的规则计数。
     ...options.provenance === undefined ? {} : { provenance: provenanceJson(options.provenance) },
+    // 目录预算始终给机器侧：referenceCalibrated=false 明确标注参考值未核实。
+    announcement: announcementJson(buildAnnouncement(result.results.map(item => item.skill))),
     results: result.results.map(skill => ({
       name: skill.skill.name,
       provider: skill.skill.provider,

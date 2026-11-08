@@ -330,7 +330,7 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor
 | SD009 | warn | 多 root/provider 同名技能，可能被遮蔽 |
 | SD010 | warn | invocation 字段不是布尔值（含 legacy camelCase） |
 | SD011 | info | 技能名过长（>64） |
-| SD012 | warn | 可疑指令启发式：忽略前置指令、外传凭证、隐藏 Unicode、长 base64 |
+| SD012 | warn | 可疑指令启发式：忽略前置指令、外传凭证、隐藏 Unicode、裸 ESC、Unicode 标签字符、下载后直执行的管道、长 base64 |
 | SD013 | info | 文件带 UTF-8 BOM |
 | SD014 | info | 文件使用 CRLF |
 | SD015 | warn | 资源引用包含路径穿越 |
@@ -371,6 +371,18 @@ npx --package dsh-skill-doctor dsh-skill-lint . --fix --only SD013            # 
 **刻意不修的**：简介怎么重写、同名技能留哪一个、可疑指令要不要删——这些没有唯一答案，自动改等于替你猜意图。报告末尾会列出“命中了但没动”的规则和原因。
 
 退出码：`0` 通过，`1` 有 error（或 `--warn-as-error` 时存在 warn），`2` 参数/读取错误。
+
+### 安装前自检（不自动拦截）
+
+装新技能之前，可以拿待安装目录手动跑一遍门禁：
+
+```bash
+npx --package dsh-skill-doctor dsh-skill-lint <待安装目录> --json --warn-as-error
+```
+
+`--json` 给机器可读的 `ok / summary / findings`，`--warn-as-error` 让 warn 也算失败；退出码 `1` 可以直接接在脚本里决定要不要继续装。SD012 会报出裸 ESC、不可见 Unicode 标签字符、「下载后直接执行」的管道写法，但一律是 `warn` 级启发式提示——教人用 curl 的技能也会命中，命中不等于恶意，仍需人工看一眼。
+
+**这一步由你主动发起**。插件不 hook dsh 的安装流程、不拒绝落盘、也不删文件；社区里「装前审计命中就拒绝安装」的做法，前提是插件自己掌握写入动作，本插件是只读诊断，不做安装器。所以这与前面「不做安装前门控」不矛盾：门禁在命令行里，不在插件里。
 
 GitHub Actions：
 
@@ -465,6 +477,14 @@ GitHub Actions：
 
 > `name: dsh-skill-doctor/compat` 这种第三方包子路径已在真实 dsh 桌面端验证：插件页显示「共 2 个组件 · 2 运行中」，两行都成功加载（验证的是 loader 与 fiber，不代表 `/doctor` 报告里导入技能的字段取值已在真实会话逐项核对）。若你的环境里第二行显示异常，先看 devtools 里的加载报错。
 
+### 目录预算（报告里的新指标）
+
+dsh 给模型的不是技能正文，而是第一层的精简目录：每个技能只有 `name` / `description` / `whenToUse`。这份目录常驻上下文，所以它的**总长度**是一份预算——每个技能单看都合规，几十个加起来仍可能把排在后面的整条条目挤出去，表现为「装了却永远不触发」。逐技能规则（包括 SD004 的 500 字截断）发现不了这个总量问题，这也是第二组件挂进约 50 个外部技能之后才真正值得看的指标。
+
+技能数达到 10 个、或字符数达到参考值一半时，报告会多出「目录预算」一节，给出参与的技能数、实测字符数与粗估 token；JSON 输出始终带 `announcement` 字段。小目录的纯文本报告逐字不变，已发布的「示例输出」配图也不受影响。这一节纯展示，**不产生 Finding**、不进病历、不影响 `ok` 与退出码。
+
+> **参考值 8000 字符不是 dsh 的已知阈值。** 它来自社区插件 `dsh-skill-hub` 的注释（称取自 Codex 初始技能清单的硬上限），我没有查到 dsh 官方资料确认它是同一阈值，也没有在真实会话里复现「尾部条目被截断」。因此这里只给实测数字、不判定是否超限，JSON 里的 `referenceCalibrated: false` 也是这个意思。
+
 ## 病历与复诊
 
 体检一次不难，难的是知道“这次比上次好还是坏”。两种用法：
@@ -519,6 +539,7 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 - **不知道「插件为什么失败」。** 运行时快照只投影 fiber 阶段，没有错误信息；dsh 也不落盘启动日志，失败只进桌面端 stdout。
 - **看不到「完全没被 dsh 收录」的技能。** 名字不合规或文件头坏到解析不了的，压根不在视图里——要用 `roots` 指向那个目录，让插件直接扫文件才看得到。
 - **不判断技能内容写得好不好。** 自动修复只有 BOM / CRLF 两条字节级规则；简介改写只出工单、由模型填稿、你确认后才写入，插件自己不生成文案。
+- **不拦截安装。** 插件不 hook 安装动作，也不会因为某条规则拒绝落盘；要在安装前把关，用命令行那节的「安装前自检」手动跑。目录预算也只报实测数字，不判定是否超限。
 - **token 估算是近似值。** ASCII ≈ 4 字符/token，CJK ≈ 0.75 token/字符，不承诺与 provider tokenizer 一致。
 - **同名检测只扫配置的 root。** 看不到 registry 内部所有候选，结论标注为“候选”。
 - **远端/虚拟技能没有文件级检查。** 没有本地路径，编码和引用规则自动跳过。
@@ -598,7 +619,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 261 个用例
+npm test          # 285 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

@@ -128,3 +128,21 @@ export interface ProvenanceView {
   /** 同名遮蔽组（只含 >= 2 个候选的名字）。 */
   readonly shadows: readonly ProvenanceShadow[]
 }
+
+
+/**
+ * 「目录预算」视图数据：第一层渐进披露注入的技能清单有多大。
+ *
+ * 纯展示数据，不是 Finding：病历只按 finding.rule 计数，如果这里也生成一条
+ * 告警，一次文案调整就会让老病历被误判成「新冒出来一个」。也不参与 ok 判定。
+ */
+export interface AnnouncementBudget {
+  /** 参与第一层的技能数（modelInvocable 为 true）。 */
+  readonly skills: number
+  /** name + description + whenToUse 的总字符数。 */
+  readonly chars: number
+  /** 按 3 字符/token 的粗估，仅供量级参考。 */
+  readonly approxTokens: number
+  /** 对照用的参考预算（字符）；来源未在 dsh 上校准，不是硬阈值。 */
+  readonly referenceBudget: number
+}

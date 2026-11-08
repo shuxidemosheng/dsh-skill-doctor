@@ -118,3 +118,21 @@ export async function callTool(env: FakeEnv, name: string, args: unknown): Promi
   const run = registered.execute.bind(registered)
   return await run(args, fakeExec())
 }
+
+
+/**
+ * 造一个最小 SkillInput，给不依赖 fixture 文件的单元测试用。
+ * 默认所有字段都是「健康」的；测试只覆盖自己关心的那一项，避免每个 spec
+ * 重复写一遍完整字段。注意 invocation 是嵌套对象，要改就得整体覆盖。
+ */
+export function makeSkill(overrides: Partial<SkillInput> = {}): SkillInput {
+  return {
+    name: 'demo',
+    description: '一段简短的简介',
+    content: 'body',
+    provider: 'filesystem',
+    source: 'filesystem',
+    invocation: { modelInvocable: true, userInvocable: true },
+    ...overrides,
+  }
+}

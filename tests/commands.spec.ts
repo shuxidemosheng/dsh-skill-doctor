@@ -253,3 +253,18 @@ describe('provenance in plainCheckup', () => {
     expect(plainCheckup(results, 500, undefined, undefined, view)).toContain('来源与遮蔽')
   })
 })
+
+describe('plainCheckup directory budget', () => {
+  it('leaves a small report unchanged', () => {
+    const text = plainCheckup([result('a', '短'), result('b', '短')], 500)
+    expect(text).not.toContain('目录预算')
+  })
+
+  it('shows the measured budget line for a large catalogue', () => {
+    const many = Array.from({ length: 12 }, (_, i) => result(`skill-${i}`, '简介'))
+    const text = plainCheckup(many, 500)
+    expect(text).toContain('目录预算')
+    expect(text).toContain('未在 dsh 校准')
+    expect(text).not.toContain('|')
+  })
+})
