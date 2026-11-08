@@ -40,7 +40,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@0.14.0`.
+That installs the latest version; pin it by appending a version, e.g. `@0.15.0`.
 
 From 0.14.0 the plugin page shows **two component rows** (checkup / external skill sources), each with its own switch. The second row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
@@ -376,7 +376,7 @@ Fields are mapped on import: `when_to_use` / `whenToUse` -> `whenToUse`, `disabl
 
 dsh does not hand the model skill bodies; it first injects a compact first-layer catalogue with only `name` / `description` / `whenToUse` per skill. That catalogue stays in context, so its **total length** is a budget: every skill can pass individually while dozens of them together push trailing entries out, which shows up as "installed but never triggers". Per-skill rules (including SD004's 500-char truncation) cannot see this aggregate problem. It only became worth measuring after the second row mounted roughly 50 external skills.
 
-Once the catalogue reaches ten skills, or half the reference budget in characters, the report gains an "Announcement budget" section with the participating skill count, measured characters and a rough token estimate; JSON always carries an `announcement` field. Small plain-text reports stay byte-identical, so the published "example output" screenshots are unaffected. This section is display-only: **no Finding**, no baseline entry, no change to `ok` or exit codes.
+From 0.15.0, once the catalogue reaches ten skills, or half the reference budget in characters, the report gains an "Announcement budget" section with the participating skill count, measured characters and a rough token estimate; JSON always carries an `announcement` field. Small plain-text reports stay byte-identical, so the published "example output" screenshots are unaffected. This section is display-only: **no Finding**, no baseline entry, no change to `ok` or exit codes.
 
 > **The 8000-character reference is not a known dsh threshold.** It comes from a comment in the community plugin `dsh-skill-hub` (described as Codex's hard cap for the initial skill list). We found no dsh documentation confirming the same value, and have not reproduced "trailing entries get truncated" in a real session. So this reports measured numbers only and never declares the budget exceeded; `referenceCalibrated: false` in JSON says the same thing.
 
