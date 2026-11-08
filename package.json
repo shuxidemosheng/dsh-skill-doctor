@@ -21,7 +21,7 @@
     "type": "git",
     "url": "git+https://github.com/shuxidemosheng/dsh-skill-doctor.git"
   },
-  "version": "0.13.3",
+  "version": "0.14.0",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -34,6 +34,9 @@
     "./package.json": "./package.json",
     "./client": {
       "default": "./lib/client.js"
+    },
+    "./compat": {
+      "default": "./lib/compat.js"
     }
   },
   "bin": {
@@ -62,7 +65,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/index.js --legal-comments=none --packages=external && esbuild src/cli.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/cli.js --legal-comments=none --packages=external && node scripts/build-client.mjs",
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.client.json && esbuild src/index.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/index.js --legal-comments=none --packages=external && esbuild src/cli.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/cli.js --legal-comments=none --packages=external && esbuild src/compat-entry.ts --bundle --format=esm --platform=node --target=node24 --outfile=lib/compat.js --legal-comments=none --packages=external && node scripts/build-client.mjs",
     "test": "vitest run",
     "smoke": "node scripts/smoke.mjs",
     "prepublishOnly": "npm run build",

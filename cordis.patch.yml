@@ -1,13 +1,19 @@
-# dsh-skill-doctor — 技能体检
+# dsh-skill-doctor —— 技能体检
 #
-# 本行只负责把插件挂进 profile；所有检查都是只读的。
-# 外部技能目录（Claude / Codex / ZCode）默认不扫描，需要时通过 extraRoots 显式开启：
+# 本组合包含两个组件行，插件页可以分别开关：
+#   1) skill-doctor         —— 四个体检工具 + 斜杠命令（只读诊断）
+#   2) skill-doctor-compat  —— 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh
+# 两行各有自己的 config；关掉第二行不影响第一行。
 #
-#   config:
-#     extraRoots:
-#       - ~/.claude/skills
-#       - ~/.codex/skills
-#       - ~/.zcode/skills
+# 第一行的 extraRoots 是「体检时临时扫一遍外部目录」（一次性，只影响报告），
+# 与第二行的运行时挂载是两件事，别混用：
+#   extraRoots:
+#     - ~/.claude/skills
+#
+# 第二行默认三家全开、目录不存在静默跳过。不想默认挂载就把来源写成 false，
+# 或直接在插件页关掉这一行。compat 不带热更新：改 SKILL.md 后需重启 dsh。
+# 启用后体检报告也会包含导入技能；只想看原生技能时，在第一行加：
+#   excludeProviders: [skill-doctor-compat]
 #
 - insert:
     - id: skill-doctor
@@ -15,3 +21,14 @@
       config:
         maxDescriptionLength: 500
         maxBodyTokens: 8000
+
+    - id: skill-doctor-compat
+      name: dsh-skill-doctor/compat
+      config:
+        sources:
+          claude: true   # ~/.claude/skills + <项目根>/.claude/skills
+          codex: true    # ~/.codex/skills
+          zcode: true    # ~/.zcode/skills + <项目根>/.zcode/skills
+        # providerName: skill-doctor-compat   默认，避免与 dsh-skill-compat-plus 撞名
+        # slugifyNames: true                 外来名不合 dsh kebab 规则时自动转换
+        # synthesizeDescription: true       Claude 允许缺省 description，从正文首段合成

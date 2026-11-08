@@ -11,7 +11,7 @@
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](package.json)
 [![dsh](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-4176E6.svg)](https://github.com/deepseek-ai/deepseek-harness)
 
-[亮点](#亮点) | [安装](#安装) | [怎么用](#怎么用) | [面板](#面板) | [四个工具](#四个工具) | [规则](#规则) | [命令行](#命令行) | [它做不到什么](#它做不到什么) | [故障排查](#故障排查)
+[亮点](#亮点) | [安装](#安装) | [怎么用](#怎么用) | [面板](#面板) | [四个工具](#四个工具) | [规则](#规则) | [命令行](#命令行) | [外部技能挂载](#外部技能挂载可选第二组件) | [它做不到什么](#它做不到什么) | [故障排查](#故障排查)
 
 </div>
 
@@ -31,6 +31,7 @@
 - **知道哪些技能模型从来不用。** 面板的「使用统计」按加载次数排行，跨会话累计——静态检查给不出的动态证据。
 - **按根因看，不按个数看。** 13 个技能都“简介超长”，如果它们都叫 `nature-*`，那多半是一套模板的问题——报告会把它聚成一条，告诉你改一次顶 13 次。
 - **尺子会过期，报告会说明。** “超过 500 字算长”是 dsh 当时的约定，不是常数。报告会把自己按哪个 dsh 版本校准过写出来；版本对不上时，明确提示阈值可能已过期。
+- **一个插件，两行组件，可分别开关。** 第二行把 Claude Code / Codex / ZCode 的技能目录挂进 dsh，插件页上独立开关；关掉它不影响体检。诊断仍是主线，挂载是可选的附加能力。
 - **CI 里能跑。** `dsh-skill-lint` 不依赖 dsh 运行时，退出码和 `--json` 都准备好了。
 
 ## 安装
@@ -39,7 +40,9 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@0.13.2`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@0.14.0`。
+
+0.14.0 起插件页会显示**两个组件行**（体检 / 外部技能挂载），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
 装完**完全退出并重开** dsh（面板等客户端代码只在启动时加载）。
 
@@ -409,6 +412,55 @@ GitHub Actions：
 
 配置非法时插件只打一行 warn 并禁用自己，**不会阻断会话创建**。
 
+## 外部技能挂载（可选第二组件）
+
+0.14.0 起这个包在插件页显示**两行组件**，每行有自己的 `config` 和开关：
+
+| 组件行 | 模块 | 做什么 |
+|---|---|---|
+| `skill-doctor` | `dsh-skill-doctor` | 四个体检工具、斜杠命令、面板（只读诊断） |
+| `skill-doctor-compat` | `dsh-skill-doctor/compat` | 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh 的技能视图 |
+
+关掉第二行只卸载 provider，体检照常跑。底层原因：dsh 的一行组件就是 `cordis.patch.yml` 里 `- insert:` 下的一个子项，行开关作用于整行的 fiber（卸载/挂载）。两类能力写进同一个 `apply()` 就只能一起开、一起关，所以拆成了两个模块入口，通过 `package.json` 的 `exports["./compat"]` 暴露。
+
+**默认行为**：patch 里三家来源都写成 `true`，装上即挂载；目录不存在时静默跳过。dsh 原生技能同名时永远优先（rank 100/400 < 导入的 210–470），项目级导入压过用户级导入。
+
+```yaml
+- insert:
+    - id: skill-doctor
+      name: dsh-skill-doctor
+      config:
+        maxDescriptionLength: 500
+    - id: skill-doctor-compat
+      name: dsh-skill-doctor/compat
+      config:
+        sources:
+          claude: true
+          codex: false
+          zcode: false
+```
+
+第二行可用字段（未知键 fail-fast 报错，插件只打一行 warn 并自行禁用，**不阻断会话创建**）：
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `sources` | 三家全开 | `claude` / `codex` / `zcode`；写 `false` 关闭，也可写对象 `{ enabled, project, root, rank }` |
+| `extraDirs` | `[]` | 追加任意目录：`{ path, label?, rank? }` |
+| `providerName` | `skill-doctor-compat` | provider 名，避免与单独安装的 `dsh-skill-compat-plus` 撞名 |
+| `slugifyNames` | `true` | 外来名不合 dsh 的 kebab-case 时自动转换；关掉则跳过该技能 |
+| `synthesizeDescription` | `true` | Claude 允许缺省 description，此时从正文首个非空行合成 |
+
+导入时做字段映射：`when_to_use` / `whenToUse` → `whenToUse`，`disable-model-invocation`、`user-invocable` 按语义折算；`allowed-tools`、`model`、`hooks` 这类 dsh 无对应物的字段留在 metadata 里。技能正文仍按需从原文件读取，不复制。
+
+**四条边界，装前先看：**
+
+- **不带热更新。** `list()` 结果由 registry 按 revision 缓存，改了 `SKILL.md` 要重启 dsh 才重新发现（`get()` 仍每次读当前文件）。这是最小移植砍掉 `chokidar` 换来的，代价是**零新增运行时依赖**。
+- **只读发现，不做管理。** 不安装、不删除、不改写外来技能文件，也不执行技能里的脚本。
+- **导入技能也会被体检。** `SD002`（kebab-case 名）、`SD004`（500 字截断）是 dsh 的约定、不是通用标准，外来技能容易刷出误报。只想看原生技能，在第一行加 `excludeProviders: [skill-doctor-compat]`。
+- **和 `extraRoots` 不是一回事。** `extraRoots` 是体检时临时扫一遍文件（一次性、只影响报告）；`compat` 是运行时把技能挂进模型能看到的目录（长期生效）。两者可以都不开。
+
+> `name: dsh-skill-doctor/compat` 这种第三方包子路径目前只在 Node 的 `exports` 自引用与 YAML 结构上验证过，**尚未在真实 dsh loader 里跑过 e2e**。如果第二行显示异常，先看 devtools 里的加载报错。
+
 ## 病历与复诊
 
 体检一次不难，难的是知道“这次比上次好还是坏”。两种用法：
@@ -466,6 +518,8 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 - **token 估算是近似值。** ASCII ≈ 4 字符/token，CJK ≈ 0.75 token/字符，不承诺与 provider tokenizer 一致。
 - **同名检测只扫配置的 root。** 看不到 registry 内部所有候选，结论标注为“候选”。
 - **远端/虚拟技能没有文件级检查。** 没有本地路径，编码和引用规则自动跳过。
+- **外部技能挂载不监听文件变化。** 第二行不带 watcher，改了 `SKILL.md` 要重启 dsh；它也不做字段之外的语义转换，外来技能不合 dsh 命名规则时只能 slug 化或跳过。
+- **不判断外来技能合不合原 agent 的规矩。** 体检用的是 dsh 的规则（SD001–SD015），对 Claude / Codex 的技能只能给出"在 dsh 里会怎样"，不代表它在原工具里有问题。
 
 ## 故障排查
 
@@ -505,6 +559,7 @@ dsh plugin --profile <你的profile> list
 4. 远端或虚拟技能没有本地路径，自动跳过文件级规则
 5. 范围参数分两种：`roots` **限定**只查这些目录（用户点名目录时用），`extraRoots` 在会话技能之外**追加**（查同名遮蔽时用）
 6. 文件级检查一律只读；写入只有三条显式路径（`baseline` 的病历 JSON、`setDescription` 写用户确认过的那一行、`fix` 修 BOM/CRLF），全部带 `.bak` 与复验回滚
+7. 第二组件行是独立模块（`src/compat-entry.ts`），`apply()` 里只做 `ctx.skills.registerProvider()`；它只读地发现外来技能，不参与上面任何一条写入路径
 
 它**不执行**技能里的脚本，**不自动改写**文案或语义，**不发送**技能内容到网络。
 
@@ -518,6 +573,8 @@ dsh plugin --profile <你的profile> list
 
 本插件回答的是**"为什么坏了 / 为什么模型不选它"**——诊断方向。安全类检测只有 SD012 一条启发式提示，不抢安全定位；安装前门控也不做（那是 precheck 类插件的地盘）。
 
+0.14.0 起的第二组件把「挂载外部技能目录」也纳入了这个包，但它只做只读发现，仍不做浏览、增删、导入导出、技能市场或热更新；已单独装了 `dsh-skill-compat-plus` 的话，两边 provider 可共存（默认名不同）。
+
 ## 路线图
 
 - ✅ 处方分级（能自动修 / 一条命令 / 只能人工）
@@ -528,6 +585,7 @@ dsh plugin --profile <你的profile> list
 - ✅ 技能 × 插件会诊（`PL006`）
 - ✅ 改写工单 + 确认后写入（`setDescription`）
 - ✅ 目录范围参数、斜杠命令与中文菜单
+- ✅ 双组件行：体检 + 可选外部技能挂载（`./compat` 子路径导出，零新增依赖）
 - ⬜ 规则文档站与 capability registry
 - ⬜ `skill_ab`：同一 prompt 带/不带技能各跑一次，比较 token、延迟和输出
 
@@ -535,8 +593,8 @@ dsh plugin --profile <你的profile> list
 
 ```bash
 npm install
-npm run build     # tsc + esbuild（host / cli / client 三份产物）
-npm test          # 226 个用例
+npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
+npm test          # 242 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

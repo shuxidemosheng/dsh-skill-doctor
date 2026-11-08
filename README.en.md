@@ -11,7 +11,7 @@ English | [中文](README.md)
 [![Node](https://img.shields.io/badge/node-%E2%89%A524-brightgreen.svg)](package.json)
 [![dsh](https://img.shields.io/badge/dsh-%E2%89%A50.2.0--rc.2-4176E6.svg)](https://github.com/deepseek-ai/deepseek-harness)
 
-[Highlights](#highlights) | [Install](#install) | [Usage](#usage) | [Panel](#panel) | [Tools](#tools) | [Rules](#rules) | [CLI](#cli) | [Limits](#limits) | [Troubleshooting](#troubleshooting)
+[Highlights](#highlights) | [Install](#install) | [Usage](#usage) | [Panel](#panel) | [Tools](#tools) | [Rules](#rules) | [CLI](#cli) | [External skill sources](#external-skill-sources-optional-second-row) | [Limits](#limits) | [Troubleshooting](#troubleshooting)
 
 </div>
 
@@ -31,6 +31,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Shows which skills the model never uses.** The panel's Usage tab ranks skills by load count across sessions — the dynamic evidence static checks cannot give you.
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
+- **One plugin, two component rows, switched independently.** The second row mounts Claude Code / Codex / ZCode skill directories into dsh; switching it off leaves the checkup untouched. Diagnosis stays the main job; mounting is optional.
 - **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
 
 ## Install
@@ -39,7 +40,9 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@0.13.2`.
+That installs the latest version; pin it by appending a version, e.g. `@0.14.0`.
+
+From 0.14.0 the plugin page shows **two component rows** (checkup / external skill sources), each with its own switch. The second row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
 Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 
@@ -304,6 +307,55 @@ Exit codes: `0` clean, `1` errors (or warnings with `--warn-as-error`), `2` usag
 
 Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
 
+## External skill sources (optional second row)
+
+From 0.14.0 the package exposes **two component rows** in the plugin page, each with its own `config` and switch:
+
+| Row | Module | What it does |
+|---|---|---|
+| `skill-doctor` | `dsh-skill-doctor` | Four checkup tools, slash commands, panel (read-only diagnosis) |
+| `skill-doctor-compat` | `dsh-skill-doctor/compat` | Mounts Claude Code / Codex / ZCode skill directories into the dsh skill view |
+
+Switching the second row off unloads only the provider; the checkup keeps running. Why two modules: one component row in dsh is one child under `- insert:` in `cordis.patch.yml`, and a row switch acts on that row's whole fiber (unload/mount). Putting both abilities in one `apply()` would force them on and off together, so they live behind two entry points, with `./compat` exposed through `package.json` `exports`.
+
+**Defaults**: all three sources are `true` in the shipped patch, so installing mounts them immediately; missing directories are skipped silently. A native dsh skill always wins over a same-named imported one (rank 100/400 < imported 210-470), and project-level imports beat user-level ones.
+
+```yaml
+- insert:
+    - id: skill-doctor
+      name: dsh-skill-doctor
+      config:
+        maxDescriptionLength: 500
+    - id: skill-doctor-compat
+      name: dsh-skill-doctor/compat
+      config:
+        sources:
+          claude: true
+          codex: false
+          zcode: false
+```
+
+Fields on the second row (unknown keys fail fast; the plugin logs one warning and disables itself, **never blocking session creation**):
+
+| Field | Default | Meaning |
+|---|---|---|
+| `sources` | all three on | `claude` / `codex` / `zcode`; use `false` to disable, or an object `{ enabled, project, root, rank }` |
+| `extraDirs` | `[]` | Add arbitrary directories: `{ path, label?, rank? }` |
+| `providerName` | `skill-doctor-compat` | Provider name, kept distinct from a separately installed `dsh-skill-compat-plus` |
+| `slugifyNames` | `true` | Rewrite names that break dsh kebab-case; with it off those skills are skipped |
+| `synthesizeDescription` | `true` | Claude allows a missing description; synthesize one from the first non-empty body line |
+
+Fields are mapped on import: `when_to_use` / `whenToUse` -> `whenToUse`, `disable-model-invocation` and `user-invocable` are folded by meaning; fields with no dsh equivalent (`allowed-tools`, `model`, `hooks`) stay in metadata. Bodies are still read from the original file on demand, never copied.
+
+**Four boundaries, read before installing:**
+
+- **No hot reload.** `list()` results are cached by registry revision, so editing `SKILL.md` needs a dsh restart to be rediscovered (`get()` still reads the current file). This is what removing `chokidar` buys: **zero new runtime dependencies**.
+- **Read-only discovery, not management.** It never installs, deletes or rewrites foreign skill files, and never executes a skill's scripts.
+- **Imported skills are checked too.** `SD002` (kebab-case name) and `SD004` (500-char truncation) are dsh conventions, not universal standards, so foreign skills easily produce false positives. To see native skills only, add `excludeProviders: [skill-doctor-compat]` to the first row.
+- **Not the same as `extraRoots`.** `extraRoots` scans files once during a checkup (one-off, affects the report only); `compat` mounts skills into the model-visible catalogue at runtime (persistent). Both can stay off.
+
+> The third-party subpath `name: dsh-skill-doctor/compat` has so far been verified only through Node `exports` self-reference and the YAML structure, **not in a real dsh loader e2e run**. If the second row misbehaves, check the load error in devtools first.
+
 ## Record & follow-up
 
 One checkup is easy; knowing whether this run is better than the last one is not. Two ways:
@@ -361,6 +413,8 @@ Capability boundaries, not omissions:
 - **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
 - **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
 - **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
+- **The external-source row does not watch files.** It has no watcher, so editing `SKILL.md` needs a dsh restart; it also performs no semantic conversion beyond field mapping, so names that break dsh rules are either slugified or skipped.
+- **Foreign skills are not judged by the rules of their original agent.** Checkups use dsh rules (SD001-SD015); a Claude / Codex skill is only reported as "how it behaves in dsh", not as broken in its original tool.
 
 ## Troubleshooting
 
@@ -400,8 +454,9 @@ Invalid config disables the plugin on purpose, so a bad config cannot block the 
 4. Remote and virtual skills have no local path, so file-level rules are skipped
 5. Two scope parameters with different semantics: `roots` **restricts** the scan to those directories (use it when the user names one), `extraRoots` **adds** roots on top of the session skills (for shadow detection)
 6. File-level checks are read-only; there are exactly three write paths (`baseline` record JSON, `setDescription` for the confirmed line, `fix` for BOM/CRLF), each with a `.bak` and verification rollback
+7. The second row is a separate module (`src/compat-entry.ts`) whose `apply()` only calls `ctx.skills.registerProvider()`; it discovers foreign skills read-only and takes part in none of the write paths above
 
-It **never executes** a skill's scripts, **never modifies** a file (except the CLI `--fix`), and **never sends** skill content over the network.
+It **never executes** the scripts inside a skill, **never rewrites** wording or semantics on its own (only the three verified write paths above), and **never sends** skill content over the network.
 
 ## How it relates to similar plugins
 
@@ -413,6 +468,8 @@ Three kinds of skill-adjacent plugins exist, and they answer different questions
 
 This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. Safety heuristics are limited to SD012, and pre-install gating is deliberately out of scope (that belongs to precheck-style plugins).
 
+From 0.14.0 the second row also mounts external skill directories, but only as read-only discovery: no browsing, add/remove, import/export, marketplace or hot reload. If `dsh-skill-compat-plus` is installed separately, both providers can coexist (different default names).
+
 ## Roadmap
 
 - ✅ Prescription tiers (auto-fixable / one command / human only)
@@ -423,6 +480,7 @@ This plugin answers **"why is it broken / why does the model not pick it"** — 
 - ✅ Skill × plugin consultation (`PL006`)
 - ✅ Rewrite worksheet + confirmed writes (`setDescription`)
 - ✅ Scope parameter, slash commands and the Chinese menu
+- ✅ Two component rows: checkup + optional external skill mounting (`./compat` subpath export, zero new dependencies)
 - ⬜ Rule documentation site and capability registry
 - ⬜ `skill_ab`: run the same prompt with and without a skill, compare tokens, latency and output
 
@@ -430,8 +488,8 @@ This plugin answers **"why is it broken / why does the model not pick it"** — 
 
 ```bash
 npm install
-npm run build     # tsc + esbuild (host / cli / client)
-npm test          # 226 tests
+npm run build     # tsc + esbuild (host / cli / client / compat)
+npm test          # 242 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```
