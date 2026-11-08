@@ -26,13 +26,14 @@ import {
 } from './baseline.js'
 import { clusterFindings } from './clusters.js'
 import { profileNameOf } from './profile-name.js'
-import { collectRuntimeSkills } from './runtime.js'
+import { collectRuntimeSkills, collectRuntimeSkillsWithWinners, collectWinners } from './runtime.js'
 import { scanRoots } from './scanner/fs-scan.js'
 import { scanProfile } from './plugins/scan.js'
 import { lintSkills } from './scanner/scan.js'
 import { analyzeTruncation, extractTriggers, triggerLabel } from './tools/report.js'
+import { buildProvenance, provenancePlainLines } from './tools/provenance.js'
 import { renderRewriteWorksheet } from './tools/rewrite.js'
-import type { SkillLintResult } from './types.js'
+import type { ProvenanceView, SkillInput, SkillLintResult, WinnerInfo } from './types.js'
 
 /** 一条命令的静态描述。 */
 export interface CommandSpec {
@@ -73,12 +74,18 @@ function tierOf(result: SkillLintResult, limit: number): Tier {
  * @param results - 全部技能结果。
  * @param limit - 简介长度上限。
  * @param scopedTo - 用户点名的范围；给了就在标题里说明，避免误读成全量。
+ * @param heading - 报告标题；单技能诊断会换成「技能诊断 · xxx」。
+ * @param provenance - 可选的来源与遮蔽视图；undefined 时整节不输出，
+ *   保证纯原生、单一来源的报告与之前逐字一致。
+ *
+ * 第 5 个参数刻意放在最后且可选：前 4 个参数的调用方一行都不用改。
  */
 export function plainCheckup(
   results: readonly SkillLintResult[],
   limit: number,
   scopedTo?: readonly string[],
   heading = '技能体检',
+  provenance?: ProvenanceView,
 ): string {
   if (results.length === 0) {
     return scopedTo === undefined || scopedTo.length === 0
@@ -96,6 +103,10 @@ export function plainCheckup(
     `⛔ 用不了 ${tiers.broken} · ⚠️ 影响大 ${tiers.high} · 💡 影响小 ${tiers.low}`
     + ` · 💡 其他 ${tiers.info} · ✅ 正常 ${tiers.ok}`,
   )
+
+  // 来源与遮蔽放在共性问题之前：先看这批技能来自哪里、有没有同名被遮蔽，
+  // 再判断「13 个超长是不是一个模板问题」。纯文本不能用表格，所以是缩进列表。
+  if (provenance !== undefined) lines.push('', ...provenancePlainLines(provenance))
 
   // 共性问题优先：13 个同名技能命中同一条规则，是一个根因不是 13 个问题。
   const clusters = clusterFindings(results)
@@ -185,13 +196,30 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
   const limit = config.maxDescriptionLength
 
   /** 采集技能：给了范围就走磁盘，否则用会话可见技能。 */
-  const collect = async (input: string): Promise<{ results: SkillLintResult[]; scopedTo?: string[] }> => {
+  const collect = async (input: string): Promise<{
+    results: SkillLintResult[]
+    scopedTo?: string[]
+    provenance?: ProvenanceView
+  }> => {
     const roots = input.trim().length === 0 ? [] : [input.trim()]
-    const skills = roots.length > 0
-      ? (await scanRoots(roots, config.maxFileBytes)).skills
-      : await collectRuntimeSkills(ctx, { config })
-    const result = await lintSkills(skills, config)
-    return roots.length > 0 ? { results: [...result.results], scopedTo: roots } : { results: [...result.results] }
+    let skills: SkillInput[]
+    let winners: ReadonlyMap<string, WinnerInfo> | undefined
+    if (roots.length > 0) {
+      skills = (await scanRoots(roots, config.maxFileBytes)).skills
+      // 直接扫文件时没有 snapshot，补一次只用于判定同名胜负；失败自动降级。
+      winners = await collectWinners(ctx, {})
+    } else {
+      const collected = await collectRuntimeSkillsWithWinners(ctx, { config })
+      skills = collected.skills
+      winners = collected.winners
+    }
+    const result = await lintSkills(skills, config, winners)
+    const provenance = buildProvenance(result.results.map(item => item.skill), winners)
+    return {
+      results: [...result.results],
+      ...roots.length > 0 ? { scopedTo: roots } : {},
+      ...provenance === undefined ? {} : { provenance },
+    }
   }
 
   return [
@@ -199,8 +227,8 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
       name: 'doctor',
       ...COMMAND_META.doctor,
       run: async input => {
-        const { results, scopedTo } = await collect(input)
-        return plainCheckup(results, limit, scopedTo)
+        const { results, scopedTo, provenance } = await collect(input)
+        return plainCheckup(results, limit, scopedTo, undefined, provenance)
       },
     },
     {
@@ -214,8 +242,10 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
           const why = scanned.issues.length === 0 ? '' : `\n扫描提示：${scanned.issues.join('；')}`
           return `在 ${target} 里没找到技能（每个技能要自己的 SKILL.md）。${why}`
         }
-        const result = await lintSkills(scanned.skills, config)
-        return plainCheckup(result.results, limit, [target])
+        const winners = await collectWinners(ctx, {})
+        const result = await lintSkills(scanned.skills, config, winners)
+        const provenance = buildProvenance(result.results.map(item => item.skill), winners)
+        return plainCheckup(result.results, limit, [target], undefined, provenance)
       },
     },
     {

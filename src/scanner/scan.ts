@@ -1,6 +1,6 @@
 /** 扫描编排：收集 findings → 规则覆盖 → 阈值过滤 → 汇总。 */
 import type { ResolvedConfig } from '../config.js'
-import type { Finding, ScanResult, Severity, SkillInput, SkillLintResult } from '../types.js'
+import type { Finding, ScanResult, Severity, SkillInput, SkillLintResult, WinnerInfo } from '../types.js'
 import { checkBudget } from './checks/budget.js'
 import { duplicateFindingsBySkill } from './checks/duplicates.js'
 import { checkInstructions } from './checks/instructions.js'
@@ -84,13 +84,17 @@ export function filterSkills(
   })
 }
 
-/** 检查一批技能；先做 provider 过滤与同名检测。 */
+/**
+ * 检查一批技能；先做 provider 过滤与同名检测。
+ * @param winners - 可选的 registry 获胜者视图；给了才能把 SD009 从「候选」升级为确定结论。
+ */
 export async function lintSkills(
   skills: readonly SkillInput[],
   config: ResolvedConfig,
+  winners?: ReadonlyMap<string, WinnerInfo>,
 ): Promise<ScanResult> {
   const filtered = filterSkills(skills, config)
-  const duplicates = duplicateFindingsBySkill(filtered)
+  const duplicates = duplicateFindingsBySkill(filtered, winners)
   const results = await Promise.all(
     filtered.map(skill => lintSkill(skill, config, duplicates.get(skill) ?? [])),
   )

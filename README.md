@@ -132,6 +132,8 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor
 
 > 如果哪天 dsh 把上面那条正则放宽到 `\p{L}`，把 `src/source.ts` 里候选的 `token` 换成中文即可，其余逻辑不用动。
 
+> 补充（2026-11-08）：社区有 `dsh-chinese-skill-patch` 能让**中文技能名**被发现、补全和调用。它用 `require.resolve` 定位 `dsh-skill` / `dsh-skill-filesystem` / `dsh-tool-skill` 的 `lib/index.js`，把 `SKILL_NAME` 正则字符串替换成 `[\p{L}0-9]`，再加 `CN_GESTURE` 分支与 CN 版 `skill` 工具。它解决的是**技能名的发现与调用**，没有改输入框的 `TEXT_REF_RE`，也没有让中文变成蓝色 chip —— 上面的结论仍然成立。代价是持久化修改宿主文件、dsh 升级后被覆盖要重打，与本插件「只读、不碰宿主」的纪律冲突，所以不采用。
+
 ## 四个工具
 
 | 工具 | 一句话 | 什么时候用 |
@@ -459,7 +461,9 @@ GitHub Actions：
 - **导入技能也会被体检。** `SD002`（kebab-case 名）、`SD004`（500 字截断）是 dsh 的约定、不是通用标准，外来技能容易刷出误报。只想看原生技能，在第一行加 `excludeProviders: [skill-doctor-compat]`。
 - **和 `extraRoots` 不是一回事。** `extraRoots` 是体检时临时扫一遍文件（一次性、只影响报告）；`compat` 是运行时把技能挂进模型能看到的目录（长期生效）。两者可以都不开。
 
-> `name: dsh-skill-doctor/compat` 这种第三方包子路径目前只在 Node 的 `exports` 自引用与 YAML 结构上验证过，**尚未在真实 dsh loader 里跑过 e2e**。如果第二行显示异常，先看 devtools 里的加载报错。
+> 补充（2026-11-08）：社区里 `dsh-plugin-skill-autoroute` 监听 dsh 原生的 `skills/change` 事件来失效自己的技能目录缓存，说明存在比常驻 `chokidar` watcher 更轻的路径。**未验证**：该事件能否让第三方 provider 触发 registry 重新 collect（那个插件只失效自己的缓存）。验证之前，本插件仍不做热更新，上面的结论不变。
+
+> `name: dsh-skill-doctor/compat` 这种第三方包子路径已在真实 dsh 桌面端验证：插件页显示「共 2 个组件 · 2 运行中」，两行都成功加载（验证的是 loader 与 fiber，不代表 `/doctor` 报告里导入技能的字段取值已在真实会话逐项核对）。若你的环境里第二行显示异常，先看 devtools 里的加载报错。
 
 ## 病历与复诊
 
@@ -594,7 +598,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 242 个用例
+npm test          # 261 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

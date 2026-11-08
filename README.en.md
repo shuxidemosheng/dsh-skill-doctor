@@ -133,6 +133,8 @@ Panel buttons write these same six tokens: clicking 复诊对比 puts `/followup
 
 > If dsh ever widens that regex to `\p{L}`, switch the candidates' `token` back to Chinese in `src/source.ts`; nothing else changes.
 
+> Update (2026-11-08): a community plugin, `dsh-chinese-skill-patch`, makes Chinese skill names discoverable and invocable. It uses `require.resolve` to locate `dsh-skill` / `dsh-skill-filesystem` / `dsh-tool-skill`, replaces the `SKILL_NAME` regex with `[\p{L}0-9]`, and adds a `CN_GESTURE` branch plus a CN variant of the `skill` tool. It fixes **name discovery and invocation**, not the composer `TEXT_REF_RE`, and does not make Chinese chips possible — the conclusion above still stands. The cost is a persistent edit to host files that must be re-applied after a dsh upgrade, which conflicts with this plugin's read-only, no-host-modification rule, so we do not adopt it.
+
 ## Tools
 
 | Tool | What it does | When |
@@ -354,7 +356,9 @@ Fields are mapped on import: `when_to_use` / `whenToUse` -> `whenToUse`, `disabl
 - **Imported skills are checked too.** `SD002` (kebab-case name) and `SD004` (500-char truncation) are dsh conventions, not universal standards, so foreign skills easily produce false positives. To see native skills only, add `excludeProviders: [skill-doctor-compat]` to the first row.
 - **Not the same as `extraRoots`.** `extraRoots` scans files once during a checkup (one-off, affects the report only); `compat` mounts skills into the model-visible catalogue at runtime (persistent). Both can stay off.
 
-> The third-party subpath `name: dsh-skill-doctor/compat` has so far been verified only through Node `exports` self-reference and the YAML structure, **not in a real dsh loader e2e run**. If the second row misbehaves, check the load error in devtools first.
+> Update (2026-11-08): `dsh-plugin-skill-autoroute` from the community listens to dsh's native `skills/change` event to invalidate its own catalogue cache, which suggests a cheaper path than a resident `chokidar` watcher. **Unverified**: whether that event can make a third-party provider trigger a registry re-collect (that plugin only invalidates its own cache). Until verified, this plugin still has no hot reload and the conclusion above stands.
+
+> The third-party subpath `name: dsh-skill-doctor/compat` has been verified in a real dsh desktop build: the plugin page shows two component rows, both running. That validates loading and fibers, not the exact provider/source values imported skills get inside a real `/doctor` report. If the second row misbehaves in your environment, check the load error in devtools first.
 
 ## Record & follow-up
 
@@ -489,7 +493,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 242 tests
+npm test          # 261 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

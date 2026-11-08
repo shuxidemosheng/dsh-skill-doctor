@@ -12,7 +12,8 @@ import { dirname } from 'node:path'
 import type { BaselineDiff, RuleDelta } from '../baseline.js'
 import { clusterFindings, clusterHint, type RuleCluster } from '../clusters.js'
 import { RULES } from '../scanner/rules.js'
-import type { Finding, ScanResult, Severity, SkillLintResult } from '../types.js'
+import type { Finding, ProvenanceView, ScanResult, Severity, SkillLintResult } from '../types.js'
+import { provenanceJson, provenanceMarkdownLines } from './provenance.js'
 import { calibrationNote, calibrationWarning, type DshVersionInfo } from '../version-check.js'
 import { prescribeKind, prescriptionOf, prescriptionLine } from './prescriptions.js'
 
@@ -43,6 +44,11 @@ export interface ReportOptions {
   readonly scopedTo?: readonly string[]
   /** 扫描指定范围时遇到的问题（路径不存在等），放文末技术细节。 */
   readonly scopeIssues?: readonly string[]
+  /**
+   * 「来源与遮蔽」视图。由调用方用 buildProvenance 构造；返回 undefined 时
+   * 不渲染这一节（纯原生、单一来源、无同名遮蔽的报告保持原样）。
+   */
+  readonly provenance?: ProvenanceView
 }
 
 function limitOf(options: ReportOptions): number {
@@ -275,6 +281,7 @@ export function renderDoctorMarkdown(result: SkillLintResult, options: ReportOpt
     `**结论：${verdictOf(result, truncation, limit)}**`,
     '',
     ...summaryTable(result, truncation, limit),
+    ...options.provenance === undefined ? [] : provenanceMarkdownLines(options.provenance),
     '## 模型看到的信息',
     '',
   ]
@@ -421,6 +428,8 @@ function renderTechnicalMarkdown(result: ScanResult, limit: number, options: Rep
     lines.push('没有找到技能。确认 cwd、`extraRoots` 或技能根目录。')
     return lines.join('\n')
   }
+
+  if (options.provenance !== undefined) lines.push(...provenanceMarkdownLines(options.provenance))
 
   if (blocking.length > 0) {
     lines.push('## 需要修复', '')
@@ -677,6 +686,10 @@ function renderPlainMarkdown(result: ScanResult, limit: number, options: ReportO
     lines.push(...recordSection(options))
   }
 
+  // 来源与遮蔽：0.14.0 起外部技能也能挂进目录，先交代它们来自哪里、
+  // 有没有同名被遮蔽，再看下面的共性问题与逐条处方。
+  if (options.provenance !== undefined) lines.push(...provenanceMarkdownLines(options.provenance))
+
   // 共性问题放在逐个展开之前：先让人知道“13 个超长其实是一个模板问题”，
   // 再看下面的细节，才知道该改模板还是改单个文件。
   lines.push(...clusterSection(clusterFindings(result.results), limit))
@@ -802,6 +815,8 @@ export function renderLintJson(result: ScanResult, options: ReportOptions = {}):
     ...options.dshVersion === undefined ? {} : { calibration: options.dshVersion },
     ...options.recordSaved === undefined ? {} : { recordSaved: options.recordSaved },
     ...options.scopedTo === undefined ? {} : { scopedTo: options.scopedTo },
+    // 机器可读的来源分组；刻意放在 findings 之外，不扰动 baseline / CI 的规则计数。
+    ...options.provenance === undefined ? {} : { provenance: provenanceJson(options.provenance) },
     results: result.results.map(skill => ({
       name: skill.skill.name,
       provider: skill.skill.provider,

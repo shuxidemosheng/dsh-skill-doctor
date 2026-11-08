@@ -14,9 +14,9 @@ import {
   type BaselineDiff,
 } from '../baseline.js'
 import type { ResolvedConfig } from '../config.js'
-import type { SkillInput } from '../types.js'
+import type { SkillInput, WinnerInfo } from '../types.js'
 import { profileNameOf } from '../profile-name.js'
-import { collectRuntimeSkills } from '../runtime.js'
+import { collectRuntimeSkillsWithWinners, collectWinners } from '../runtime.js'
 import { scanRoots, scanSkillFile } from '../scanner/fs-scan.js'
 import { duplicateFindingsBySkill } from '../scanner/checks/duplicates.js'
 import { filterSkills, lintSkill, lintSkills } from '../scanner/scan.js'
@@ -26,6 +26,7 @@ import { applyFixes, type Verify } from '../fixer/apply.js'
 import { setDescription as writeDescription } from '../fixer/description.js'
 import { renderRewriteBatch, renderRewriteWorksheet } from './rewrite.js'
 import { renderDoctorMarkdown, renderLintJson, renderLintMarkdown, type ReportOptions } from './report.js'
+import { buildProvenance } from './provenance.js'
 
 /** 病历路径的解析：`auto` 用 profile 专属的默认路径，其余按用户给的路径展开。 */
 function recordPathOf(config: ResolvedConfig, ctx: Context): string | undefined {
@@ -110,18 +111,29 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
       // extraRoots = 在会话可见技能之外再补充（查同名遮蔽时用）。
       const scopedTo = args.roots !== undefined && args.roots.length > 0 ? args.roots : undefined
       let skills: SkillInput[]
+      // registry 判定的同名获胜者。文件扫描路径没有现成的 snapshot，需要补一次；
+      // 拿不到就降级为「候选」，绝不臆测谁生效。
+      let winners: ReadonlyMap<string, WinnerInfo> | undefined
       let scopeIssues: readonly string[] = []
       if (scopedTo !== undefined) {
         const scanned = await scanRoots(scopedTo, config.maxFileBytes)
         skills = [...scanned.skills]
         scopeIssues = scanned.issues
+        winners = await collectWinners(ctx, {
+          ...cwd === undefined ? {} : { cwd },
+          ...exec.agent === undefined ? {} : { scope: exec.agent },
+          signal: exec.signal,
+        })
       } else {
-        skills = await collectRuntimeSkills(ctx, {
+        // 一次 snapshot 同时产出技能与获胜者，不额外增加 registry 往返。
+        const collected = await collectRuntimeSkillsWithWinners(ctx, {
           ...cwd === undefined ? {} : { cwd },
           ...exec.agent === undefined ? {} : { scope: exec.agent },
           signal: exec.signal,
           config,
         })
+        skills = collected.skills
+        winners = collected.winners
       }
       if (args.extraRoots !== undefined && args.extraRoots.length > 0) {
         const extra = await scanRoots(args.extraRoots, config.maxFileBytes)
@@ -199,7 +211,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
 
         // 单技能模式也要做同名检测：extraRoots 里可能还有同名副本，
         // 用户按提示加了这个参数却看不到“可能被覆盖”，就会误以为没问题。
-        const duplicates = duplicateFindingsBySkill(filterSkills(skills, config))
+        const duplicates = duplicateFindingsBySkill(filterSkills(skills, config), winners)
         const result = await lintSkill(skill, config, duplicates.get(skill) ?? [])
         const reportOptions = {
           maxDescriptionLength: config.maxDescriptionLength,
@@ -218,7 +230,7 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         return renderDoctorMarkdown(result, reportOptions)
       }
 
-      const result = await lintSkills(skills, config)
+      const result = await lintSkills(skills, config, winners)
       const recordPath = recordPathOf(config, ctx)
       // 命令式构建而不是对象字面量里连续 async spread：
       // esbuild 对 `...(cond ? {} : await f())` 后跟另一个 async spread 的降级
@@ -228,6 +240,9 @@ export function buildDoctorTool(ctx: Context, config: ResolvedConfig): ReturnTyp
         maxDescriptionLength: config.maxDescriptionLength,
         dshVersion: await readDshVersion(),
       } as Writable<ReportOptions>
+      // 视图从**过滤后**的结果派生，保证与报告里展示的技能集合一致。
+      const provenance = buildProvenance(result.results.map(item => item.skill), winners, cwd)
+      if (provenance !== undefined) reportOptions.provenance = provenance
       if (scopedTo !== undefined) reportOptions.scopedTo = scopedTo
       if (scopeIssues.length > 0) reportOptions.scopeIssues = scopeIssues
       if (recordPath !== undefined) {

@@ -25,6 +25,8 @@ export interface FakeEnv {
   readonly tools: Map<string, { name: string; execute: (args: unknown, exec: unknown) => Promise<unknown> }>
   readonly warnings: string[]
   readonly skillCalls: { snapshot: number; get: string[] }
+  /** registry 视角的获胜者（每个 name 的首条）；供「来源与遮蔽」断言使用。 */
+  readonly winners: Map<string, SkillInput>
 }
 
 /** 用给定技能构造 ctx；注册表快照只返回每个 name 的第一个。 */
@@ -90,7 +92,7 @@ export function createFakeCtx(entries: readonly FakeEntry[]): FakeEnv {
     },
   }
 
-  return { ctx, tools, warnings, skillCalls }
+  return { ctx, tools, warnings, skillCalls, winners }
 }
 
 /** 与模型驱动路径一致的 execute 第二参数。 */

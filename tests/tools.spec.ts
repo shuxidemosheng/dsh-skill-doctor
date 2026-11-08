@@ -338,3 +338,35 @@ describe('scoped scan (roots)', () => {
     }
   })
 })
+
+describe('provenance in tool reports', () => {
+  async function mixedEnv() {
+    const native = await loadFixture('good-skill')
+    const imported = {
+      ...(await loadFixture('bad-name')),
+      provider: 'skill-doctor-compat',
+      source: 'claude-code',
+    }
+    return createFakeCtx([{ skill: native }, { skill: imported }])
+  }
+
+  it('renders the provenance section when providers differ', async () => {
+    const env = await mixedEnv()
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', {}))
+    expect(output).toContain('来源与遮蔽')
+    expect(output).toContain('skill-doctor-compat')
+  })
+
+  it('exposes provenance as a top-level JSON field, outside findings', async () => {
+    const env = await mixedEnv()
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'skill_doctor', { format: 'json' }))
+    const parsed = JSON.parse(output) as {
+      provenance?: { byProvider: { provider: string }[] }
+      results: { findings: unknown[] }[]
+    }
+    expect(parsed.provenance?.byProvider.some(item => item.provider === 'skill-doctor-compat')).toBe(true)
+    expect(parsed.results.every(item => Array.isArray(item.findings))).toBe(true)
+  })
+})

@@ -10,7 +10,7 @@ import {
 } from '../src/commands'
 import { resolveConfig } from '../src/config'
 import type { BaselineDiff } from '../src/baseline'
-import type { Finding, RuleId, SkillLintResult } from '../src/types'
+import type { Finding, ProvenanceView, RuleId, SkillLintResult } from '../src/types'
 import { createFakeCtx, fakeExec, loadFixture } from './helpers'
 
 /** 造一个结果；description 长度直接决定落哪一档。 */
@@ -225,5 +225,31 @@ describe('command handler contract', () => {
     expect(outcome.text).toContain('技能体检')
     // fakeExec 只是保证工具路径不受影响；命令不依赖它。
     expect(typeof fakeExec).toBe('function')
+  })
+})
+
+describe('provenance in plainCheckup', () => {
+  const view: ProvenanceView = {
+    byProvider: [{ provider: 'filesystem', count: 2 }, { provider: 'skill-doctor-compat', count: 1 }],
+    byRoot: [{ root: '~/.claude/skills', count: 3 }],
+    shadows: [{
+      name: 'demo',
+      resolved: false,
+      shadowed: ['~/.claude/skills/demo/SKILL.md', 'skills/demo/SKILL.md'],
+    }],
+  }
+
+  it('appends the section as an indented list, never a table', () => {
+    const text = plainCheckup([result('a', '短')], 500, undefined, undefined, view)
+    expect(text).toContain('来源与遮蔽')
+    expect(text).toContain('· 按来源：')
+    expect(text).toContain('未判定胜出者，以 registry 为准')
+    expect(text).not.toContain('|')
+  })
+
+  it('leaves the report unchanged when no view is passed', () => {
+    const results = [result('a', '短'), result('b', LONG)]
+    expect(plainCheckup(results, 500)).not.toContain('来源与遮蔽')
+    expect(plainCheckup(results, 500, undefined, undefined, view)).toContain('来源与遮蔽')
   })
 })

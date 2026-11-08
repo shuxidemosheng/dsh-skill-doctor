@@ -263,3 +263,23 @@ describe('report: follow-up section', () => {
     expect((JSON.parse(renderLintJson(after, { recordSaved: 'x' })) as { recordSaved: string }).recordSaved).toBe('x')
   })
 })
+
+describe('SD009 wording changes and baseline', () => {
+  it('does not create a regression when only the message text changes', () => {
+    const before = scan([result('dup-a', ['SD009']), result('dup-b', ['SD009'])])
+    const after: ScanResult = {
+      ...before,
+      results: before.results.map(item => ({
+        ...item,
+        findings: item.findings.map(finding => ({
+          ...finding,
+          message: 'registry 实际加载的是 X；这一份被遮蔽',
+        })),
+      })),
+    }
+    const savedAt = '2026-11-08T00:00:00.000Z'
+    const left = buildBaseline(before, META, savedAt)
+    expect(buildBaseline(after, META, savedAt)).toEqual(left)
+    expect(diffBaseline(left, after, META).regressed).toHaveLength(0)
+  })
+})

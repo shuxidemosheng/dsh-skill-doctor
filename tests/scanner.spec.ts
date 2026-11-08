@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveConfig } from '../src/config'
 import { scanRoot } from '../src/scanner/fs-scan'
 import { lintSkills } from '../src/scanner/scan'
-import type { Finding, SkillInput } from '../src/types'
+import type { Finding, SkillInput, WinnerInfo } from '../src/types'
 import { FIXTURES } from './helpers'
 
 async function lintDirs(dirs: readonly string[], config = resolveConfig(undefined)) {
@@ -77,5 +77,39 @@ describe('scanner rules', () => {
     const errorsOnly = resolveConfig({ severityThreshold: 'error' })
     const onlyErrors = await lintDirs(['bad-name'], errorsOnly)
     expect(onlyErrors.findings.every(finding => finding.severity === 'error')).toBe(true)
+  })
+})
+
+describe('SD009 with a registry winner', () => {
+  async function dupSkills(): Promise<SkillInput[]> {
+    const config = resolveConfig(undefined)
+    const skills: SkillInput[] = []
+    for (const dir of ['dup-a', 'dup-b']) {
+      skills.push(...(await scanRoot(`${FIXTURES}${dir}`, config.maxFileBytes)).skills)
+    }
+    return skills
+  }
+
+  it('names the winner but keeps exactly two SD009 findings', async () => {
+    const skills = await dupSkills()
+    const winner = skills[0]!
+    const info: WinnerInfo = {
+      name: winner.name,
+      provider: winner.provider,
+      source: winner.source,
+      ...winner.path === undefined ? {} : { path: winner.path },
+    }
+    const result = await lintSkills(skills, resolveConfig(undefined), new Map([[winner.name, info]]))
+    const findings = result.results.flatMap(item => item.findings).filter(item => item.rule === 'SD009')
+    expect(findings).toHaveLength(2)
+    expect(findings.some(item => item.message.includes('registry 实际加载的是'))).toBe(true)
+  })
+
+  it('keeps the candidate wording when no registry view is available', async () => {
+    const skills = await dupSkills()
+    const result = await lintSkills(skills, resolveConfig(undefined))
+    const findings = result.results.flatMap(item => item.findings).filter(item => item.rule === 'SD009')
+    expect(findings).toHaveLength(2)
+    expect(findings.every(item => item.message.includes('dsh 只会加载其中一个'))).toBe(true)
   })
 })
