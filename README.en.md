@@ -372,6 +372,15 @@ Fields are mapped on import: `when_to_use` / `whenToUse` -> `whenToUse`, `disabl
 
 > The third-party subpath `name: dsh-skill-doctor/compat` has been verified in a real dsh desktop build: the plugin page shows two component rows, both running. That validates loading and fibers, not the exact provider/source values imported skills get inside a real `/doctor` report. If the second row misbehaves in your environment, check the load error in devtools first.
 
+### Provenance & shadowing (a new report metric)
+
+From 0.15.0 the report gains a "Provenance & shadowing" section answering two catalogue-level questions:
+
+- **Where these skills came from.** Grouped by `provider` and source root, listing the actual strings without guessing which are "native" or "imported".
+- **Which same-named skill actually runs.** With the registry verdict, it names the winner: `demo  winner -> ~/.claude/skills/demo/SKILL.md`, others labelled shadowed. The basis: `ctx.skills.snapshot()` returns the already-adjudicated catalogue — each name appears exactly once — so matching the winner's file path against the candidates settles it. When paths do not match (e.g. `/scope` pointed at a directory never registered with the registry), it honestly reports "winner undetermined, registry is authoritative" instead of guessing.
+
+Every path is folded before it enters a report: home directory becomes `~`, the project root becomes `<project>`, other absolute paths keep only the last two segments without the drive letter. Like the announcement budget, this section is display-only — no Finding, no baseline entry, no change to `ok` or exit codes — and it only appears when sources differ or a same-named group exists, so single-source reports stay unchanged.
+
 ### Announcement budget (a new report metric)
 
 dsh does not hand the model skill bodies; it first injects a compact first-layer catalogue with only `name` / `description` / `whenToUse` per skill. That catalogue stays in context, so its **total length** is a budget: every skill can pass individually while dozens of them together push trailing entries out, which shows up as "installed but never triggers". Per-skill rules (including SD004's 500-char truncation) cannot see this aggregate problem. It only became worth measuring after the second row mounted roughly 50 external skills.
