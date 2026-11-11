@@ -1,4 +1,7 @@
 /** 斜杠命令：纯文本渲染 + 注册行为。 */
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   buildCommands,
@@ -266,5 +269,44 @@ describe('plainCheckup directory budget', () => {
     expect(text).toContain('目录预算')
     expect(text).toContain('未在 dsh 校准')
     expect(text).not.toContain('|')
+  })
+})
+
+describe('/review command', () => {
+  /** 用临时 DSH_HOME 隔离：/review 会跑 scanProfile，不能读真实 profile。 */
+  async function withTempHome<T>(fn: () => Promise<T>): Promise<T> {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-review-cmd-'))
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      return await fn()
+    } finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+      await rm(home, { recursive: true, force: true })
+    }
+  }
+
+  it('renders a heuristic review for a named package', async () => {
+    await withTempHome(async () => {
+      const env = createFakeCtx([])
+      const specs = buildCommands(env.ctx as never, resolveConfig(undefined))
+      const text = await specs.find(spec => spec.name === 'review')!.run('ghost-pkg')
+      expect(text).toContain('插件审查 · ghost-pkg')
+      expect(text).toContain('静态启发式风险提示，非安全结论')
+      expect(text).toContain('不拦截安装')
+      expect(text).not.toContain('|')
+    })
+  })
+
+  it('returns a usable message with no argument', async () => {
+    await withTempHome(async () => {
+      const env = createFakeCtx([])
+      const specs = buildCommands(env.ctx as never, resolveConfig(undefined))
+      const text = await specs.find(spec => spec.name === 'review')!.run('  ')
+      // 有缓存时输出缓存报告，没有时给可照抄的提示；两种都必须非空且可操作。
+      expect(text.length).toBeGreaterThan(10)
+      expect(text.includes('/review') || text.includes('插件审查')).toBe(true)
+    })
   })
 })

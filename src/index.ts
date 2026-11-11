@@ -21,6 +21,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { registerCommands } from './commands.js'
+import { registerInstallWatch } from './plugins/review.js'
 import { resolveConfig } from './config.js'
 import type { Config } from './config.js'
 import { buildDoctorTool } from './tools/doctor.js'
@@ -73,6 +74,16 @@ export function apply(ctx: Context, config: Config | undefined): void {
   } catch (error) {
     ctx.logger.warn(
       `skill-doctor: slash commands unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  // 安装完成事件的订阅是「尽力而为」：探测不到服务时函数内部只记一行 info 就返回，
+  // 绝不把 remote 写进 inject，也绝不影响上面四个工具。
+  try {
+    registerInstallWatch(ctx)
+  } catch (error) {
+    ctx.logger.warn(
+      `skill-doctor: install watch unavailable: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
 }

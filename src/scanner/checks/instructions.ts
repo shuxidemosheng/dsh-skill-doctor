@@ -16,7 +16,7 @@ interface Pattern {
   readonly label: string
 }
 
-const PATTERNS: readonly Pattern[] = [
+export const PATTERNS: readonly Pattern[] = [
   { re: /ignore\s+(all\s+)?(previous|above|prior)\s+instructions?/i, label: '忽略前置指令' },
   { re: /disregard\s+(all\s+)?(previous|above|prior)\s+(instructions?|rules?)/i, label: '忽略前置规则' },
   { re: /(system|developer)\s+(prompt|message)\b/i, label: '引用系统/开发者提示' },
@@ -33,7 +33,7 @@ const PATTERNS: readonly Pattern[] = [
 ]
 
 /** 零宽与双向控制符：现有规则，已覆盖 bidi（U+202A–U+202E / U+2066–U+2069）。 */
-const HIDDEN = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/
+export const HIDDEN = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/
 
 /**
  * 「下载后直接执行」这一族管道写法。
@@ -42,7 +42,7 @@ const HIDDEN = /[\u200B-\u200F\u202A-\u202E\u2060-\u206F\uFEFF]/
  * 示例。一个技能里同时出现好几种时只报**一条**，避免同一个根因刷出 6 条
  * 告警，把共性问题聚类搞乱。
  */
-const REMOTE_EXEC: readonly Pattern[] = [
+export const REMOTE_EXEC: readonly Pattern[] = [
   { re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?(?:ba|z|k)?sh\b/, label: '下载内容管道进 shell' },
   { re: /\b(?:curl|wget)\b[^\n|]*\|\s*(?:sudo\s+)?python[0-9.]*\b/, label: '下载内容管道进 python' },
   { re: /\bbase64\s+(?:-d|--decode)\b[^\n|]*\|\s*(?:ba|z|k)?sh\b/, label: 'base64 解码后管道进 shell' },

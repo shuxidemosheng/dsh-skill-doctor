@@ -10,8 +10,10 @@ import { MODES } from '../src/modes'
 
 describe('doctor candidates', () => {
   it('covers every panel button exactly once', () => {
-    // 面板六个按钮与菜单六条候选必须一一对应，否则两条入口会各说各话。
+    // MODES 由 DOCTOR_CANDIDATES 派生（modes.ts），所以候选与面板按钮天然
+    // 一一对应；新增第七条 /review 会同时进菜单和面板，不需要另造一份数据。
     expect(DOCTOR_CANDIDATES).toHaveLength(MODES.length)
+    expect(DOCTOR_CANDIDATES[DOCTOR_CANDIDATES.length - 1]!.token).toBe('review')
     for (const [index, mode] of MODES.entries()) {
       expect(mode.id).toBe(DOCTOR_CANDIDATES[index]!.name)
       expect(mode.command).toBe(DOCTOR_CANDIDATES[index]!.token)

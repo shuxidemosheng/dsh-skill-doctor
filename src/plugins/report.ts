@@ -3,6 +3,7 @@ import type { PluginConflict, PluginReport } from './scan.js'
 import { sortConflicts } from './scan.js'
 import type { RuntimeSummary } from './runtime.js'
 import { prescriptionLine, prescriptionOf } from '../tools/prescriptions.js'
+import { reviewJson, reviewMarkdownLines, type ReviewResult } from './review.js'
 
 const SEVERITY_MARK = { error: '⛔', warn: '⚠️', info: '💡' } as const
 
@@ -207,7 +208,11 @@ function consultationSection(report: PluginReport): string[] {
 }
 
 /** Markdown 报告（通俗风格）。 */
-export function renderPluginMarkdown(report: PluginReport, runtime?: RuntimeSummary): string {
+export function renderPluginMarkdown(
+  report: PluginReport,
+  runtime?: RuntimeSummary,
+  review?: ReviewResult,
+): string {
   const conflicts = sortConflicts(report.conflicts)
   const blocking = conflicts.filter(item => item.severity !== 'info')
   const info = conflicts.filter(item => item.severity === 'info')
@@ -243,6 +248,9 @@ export function renderPluginMarkdown(report: PluginReport, runtime?: RuntimeSumm
 
   lines.push(...consultationSection(report))
 
+  // 安装审查是独立章节：刻意不改上面的 verdict，避免「风险提示」被读成安全结论。
+  if (review !== undefined) lines.push(...reviewMarkdownLines(review))
+
   lines.push('---', '', '## 技术细节（可跳过）', '')
   lines.push(`- profile 目录：${report.profileDir}`)
   const shipped = report.bundles.filter(bundle => bundle.availability === 'shipped').length
@@ -266,7 +274,11 @@ export function renderPluginMarkdown(report: PluginReport, runtime?: RuntimeSumm
 }
 
 /** JSON 输出：字段稳定，给脚本用。 */
-export function renderPluginJson(report: PluginReport, runtime?: RuntimeSummary): string {
+export function renderPluginJson(
+  report: PluginReport,
+  runtime?: RuntimeSummary,
+  review?: ReviewResult,
+): string {
   return JSON.stringify({
     profile: report.profileName,
     profileDir: report.profileDir,
@@ -277,5 +289,7 @@ export function renderPluginJson(report: PluginReport, runtime?: RuntimeSummary)
     })),
     notes: report.notes,
     ...runtime === undefined ? {} : { runtime },
+    // 只有显式审查时才出现，保持既有 JSON 字段稳定。
+    ...review === undefined ? {} : { review: reviewJson(review) },
   }, null, 2)
 }

@@ -2,7 +2,7 @@
 /** dsh-skill-lint：不依赖 dsh 运行时的技能 lint CLI，供技能作者与 CI 使用。 */
 import { basename } from 'node:path'
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import {
   buildBaseline,
   currentMetaOf,
@@ -18,6 +18,7 @@ import { lintSkill, lintSkills } from './scanner/scan.js'
 import { renderLintJson, renderLintMarkdown } from './tools/report.js'
 import { renderPluginJson, renderPluginMarkdown } from './plugins/report.js'
 import { scanProfile } from './plugins/scan.js'
+import { reviewBundle, reviewJson, reviewMarkdownLines } from './plugins/review.js'
 import { applyFixes, type FixOutcome, type Verify } from './fixer/apply.js'
 import { setDescription } from './fixer/description.js'
 import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
@@ -38,6 +39,8 @@ interface CliOptions {
   readonly help: boolean
   readonly version: boolean
   readonly plugins: boolean
+  /** `--review <目录>`：审查一个已落盘的插件目录（不解析 .tgz）。 */
+  readonly review?: string
   readonly profile?: string
   readonly fix: boolean
   readonly apply: boolean
@@ -71,6 +74,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let help = false
   let version = false
   let plugins = false
+  let review: string | undefined
   let profile: string | undefined
   let fix = false
   let apply = false
@@ -86,6 +90,12 @@ function parseArgs(argv: readonly string[]): CliOptions {
       case '--json': json = true; break
       case '--warn-as-error': warnAsError = true; break
       case '--plugins': plugins = true; break
+      case '--review': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--review requires a plugin directory')
+        review = value.trim()
+        break
+      }
       case '--profile': profile = argv[++i]; break
       case '--fix': fix = true; break
       case '--apply': apply = true; break
@@ -172,6 +182,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...severity === undefined ? {} : { severity },
     ...rules.length === 0 ? {} : { rules },
     plugins,
+    ...review === undefined ? {} : { review },
     ...profile === undefined ? {} : { profile },
     fix,
     apply,
@@ -193,6 +204,7 @@ function usage(): string {
     '',
     'Options:',
     '  --plugins              check installed plugins for structural conflicts (no skill scanning)',
+    '  --review <dir>         static heuristics for one unpacked plugin directory (no .tgz)',
     '  --profile <name>       profile to inspect with --plugins (default desktop)',
     '  --json                 machine-readable output',
     '  --warn-as-error        exit 1 when any warning is present',
@@ -311,6 +323,30 @@ async function main(): Promise<void> {
   }
   if (options.version) {
     process.stdout.write(`${VERSION}\n`)
+    return
+  }
+
+  // 新装插件审查：与 --plugins 一样不依赖技能扫描，先单独分流。
+  // 退出码恒 0（只有目录读不到/参数错才由 fail() 返回 2）：RV 提示只是 info/warn，
+  // 让它们变成失败会让现有 CI 加个参数就挂，违背「不拦截」的边界。
+  if (options.review !== undefined) {
+    const dir = options.review
+    if (/\.(?:tgz|tar\.gz)$/i.test(dir)) {
+      fail('--review expects an unpacked plugin directory; .tgz is not supported')
+    }
+    try {
+      const info = await stat(dir)
+      if (!info.isDirectory()) fail(`--review expects a directory: ${dir}`)
+    } catch {
+      fail(`--review cannot read directory: ${dir}`)
+    }
+    const profile = options.profile ?? 'desktop'
+    const report = await scanProfile(profile)
+    const result = await reviewBundle(dir, report)
+    process.stdout.write(
+      `${options.json ? JSON.stringify(reviewJson(result), null, 2) : reviewMarkdownLines(result).join('\n')}\n`,
+    )
+    process.exitCode = 0
     return
   }
 

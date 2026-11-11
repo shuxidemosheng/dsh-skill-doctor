@@ -237,8 +237,11 @@ describe('usage stats (cross-session)', () => {
 describe('mode chips', () => {
   it('offers every entry point exactly once', async () => {
     const { MODES, templateOf } = await import('../src/modes')
-    expect(MODES).toHaveLength(6)
-    expect(new Set(MODES.map(mode => mode.id)).size).toBe(6)
+    const { DOCTOR_CANDIDATES } = await import('../src/source')
+    // MODES 由 DOCTOR_CANDIDATES 派生（modes.ts），不要再硬编码数量：
+    // 新增一条命令时这里和面板会自动跟上，不会漏改。
+    expect(MODES).toHaveLength(DOCTOR_CANDIDATES.length)
+    expect(new Set(MODES.map(mode => mode.id)).size).toBe(DOCTOR_CANDIDATES.length)
     for (const mode of MODES) {
       expect(mode.label.length).toBeGreaterThan(0)
       expect(templateOf(mode.id)).toBe(mode.template)

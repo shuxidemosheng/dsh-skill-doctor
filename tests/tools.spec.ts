@@ -385,3 +385,27 @@ describe('announcement in tool JSON output', () => {
     expect(parsed.results.every(item => Array.isArray(item.findings))).toBe(true)
   })
 })
+
+describe('plugin_doctor optional review', () => {
+  it('exposes a review field in JSON without a security verdict', async () => {
+    const env = await envWith('good-skill')
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'plugin_doctor', { review: 'ghost-pkg', format: 'json' }))
+    const parsed = JSON.parse(output) as {
+      review?: { disclaimer: string; pkg: string; hints: unknown[] }
+    }
+    expect(parsed.review?.pkg).toBe('ghost-pkg')
+    expect(parsed.review?.disclaimer).toContain('static heuristics only')
+    expect(Array.isArray(parsed.review?.hints)).toBe(true)
+    // 审查结果本身不能把本机绝对路径带出去；报告顶层的 profileDir 是既有字段，
+    // 由插件体检负责，不在本次审查的脱敏范围内。
+    expect(JSON.stringify(parsed.review)).not.toMatch(/[A-Za-z]:[\\/]/)
+  })
+
+  it('keeps the old JSON shape when review is not requested', async () => {
+    const env = await envWith('good-skill')
+    apply(env.ctx as never, undefined)
+    const output = String(await callTool(env, 'plugin_doctor', { format: 'json' }))
+    expect(JSON.parse(output)).not.toHaveProperty('review')
+  })
+})

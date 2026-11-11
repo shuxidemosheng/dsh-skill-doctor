@@ -1,5 +1,5 @@
 /**
- * 功能模式（chips）：面板上的六个按钮。
+ * 功能模式（chips）：面板上的七个按钮。
  *
  * 数据源是 `source.ts` 的 `DOCTOR_CANDIDATES`——菜单里的中文候选与面板按钮
  * 必须一一对应，分成两份数据迟早会漂移。
@@ -24,7 +24,7 @@ export interface ModeChip {
   readonly command?: string
 }
 
-/** 六个模式：覆盖插件的全部入口，顺序与菜单一致（按使用频率）。 */
+/** 七个模式：覆盖插件的全部入口，顺序与菜单一致（按使用频率）。 */
 export const MODES: readonly ModeChip[] = DOCTOR_CANDIDATES.map(candidate => ({
   id: candidate.name,
   label: candidate.label,

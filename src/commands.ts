@@ -1,5 +1,5 @@
 /**
- * 宿主侧斜杠命令：`/doctor`、`/scope`、`/followup`、`/rewrite`。
+ * 宿主侧斜杠命令：`/doctor`、`/scope`、`/followup`、`/rewrite`、`/why`、`/clash`、`/review`。
  *
  * 为什么需要它：客户端面板只能往输入框塞纯文本，做不出那种"蓝色命令 chip"——
  * 那需要 `conversation` 服务（第三方拿不到，硬声明会让整块面板不加载）。
@@ -13,6 +13,7 @@
  * 注册是"尽力而为"：服务探测不到、或名字被占用，只记一条 warn，
  * 绝不让插件加载失败（工具必须照常可用）。
  */
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ResolvedConfig } from './config.js'
 import {
@@ -28,7 +29,10 @@ import { clusterFindings } from './clusters.js'
 import { profileNameOf } from './profile-name.js'
 import { collectRuntimeSkills, collectRuntimeSkillsWithWinners, collectWinners } from './runtime.js'
 import { scanRoots } from './scanner/fs-scan.js'
-import { scanProfile } from './plugins/scan.js'
+import { profileDirOf, scanProfile } from './plugins/scan.js'
+import {
+  getLastReview, reviewBundle, reviewPlainLines, setLastReview,
+} from './plugins/review.js'
 import { lintSkills } from './scanner/scan.js'
 import { analyzeTruncation, extractTriggers, triggerLabel } from './tools/report.js'
 import { buildProvenance, provenancePlainLines } from './tools/provenance.js'
@@ -190,10 +194,11 @@ const COMMAND_META = {
   followup: { description: '和上次体检对比', hint: '[目录，留空=全部]' },
   why: { description: '查某个技能为什么没被选中', hint: '<技能名>' },
   clash: { description: '查插件有没有改坏技能配置', hint: '[profile 名]' },
+  review: { description: '审查新装插件的静态风险与冲突', hint: '[包名，留空=最近一次]' },
 } as const
 
 /**
- * 组装四条命令。
+ * 组装七条命令。
  *
  * 每次执行都重新采集技能（不缓存）：技能文件随时会被编辑，
  * 命令输出的价值就在于"此刻"的状态。
@@ -328,7 +333,27 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
         if (report.notes.length > 0) lines.push('', `读不到的东西：${report.notes.slice(0, 3).join('；')}`)
         return lines.join('\n')
       },
-    }
+    },
+    {
+      name: 'review',
+      ...COMMAND_META.review,
+      run: async input => {
+        const name = input.trim()
+        // 不带参数：读自动订阅缓存下来的最近一次结果；没有就给可照抄的提示。
+        if (name.length === 0) {
+          const cached = getLastReview()
+          return cached === undefined
+            ? '还没有自动审查记录。给一个包名，例如 /review dsh-ops；插件页装完后若有订阅，这里会显示最近一次结果。'
+            : reviewPlainLines(cached).join('\n')
+        }
+        const profile = profileNameOf(ctx) ?? 'desktop'
+        const report = await scanProfile(profile)
+        const dir = join(profileDirOf(profile), 'node_modules', name)
+        const result = await reviewBundle(dir, report, name)
+        setLastReview(result)
+        return reviewPlainLines(result).join('\n')
+      },
+    },
   ]
 }
 
@@ -385,4 +410,4 @@ export function registerCommands(ctx: Context, config: ResolvedConfig): void {
 }
 
 /** 供测试用：命令名清单。 */
-export const COMMAND_NAMES = ['doctor', 'scope', 'followup', 'rewrite', 'why', 'clash'] as const
+export const COMMAND_NAMES = ['doctor', 'scope', 'followup', 'rewrite', 'why', 'clash', 'review'] as const

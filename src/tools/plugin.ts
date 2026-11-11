@@ -1,4 +1,5 @@
 /** plugin_doctor：检查当前 profile 里已安装的插件之间有没有结构性冲突。 */
+import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ResolvedConfig } from '../config.js'
@@ -6,6 +7,8 @@ import { renderPluginJson, renderPluginMarkdown } from '../plugins/report.js'
 import { profileNameOf } from '../profile-name.js'
 import { probeRuntime, summarizeRuntime } from '../plugins/runtime.js'
 import { scanProfile } from '../plugins/scan.js'
+import { profileDirOf } from '../plugins/scan.js'
+import { reviewBundle } from '../plugins/review.js'
 
 /**
  * 组装 plugin_doctor 工具。
@@ -23,6 +26,7 @@ export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnTy
     parameters: {
       profile: { type: 'string', description: 'Profile to inspect (defaults to the profile this session runs in).' },
       format: { type: 'string', enum: ['markdown', 'json'], description: 'Output format; defaults to markdown.' },
+      review: { type: 'string', description: 'Optional: statically review one installed plugin by bundle name; adds a heuristic risk-hint section. Not a security verdict.' },
     },
     output: {
       schema: { type: 'string' },
@@ -37,9 +41,13 @@ export function buildPluginTool(ctx: Context, _config: ResolvedConfig): ReturnTy
         probeRuntime(ctx, exec),
       ])
       const runtime = summarizeRuntime(snapshot, report.bundles)
+      // 审查是可选附加：不传 review 时行为与之前逐字一致。
+      const review = args.review === undefined
+        ? undefined
+        : await reviewBundle(join(profileDirOf(profile), 'node_modules', args.review), report, args.review)
       return args.format === 'json'
-        ? renderPluginJson(report, runtime)
-        : renderPluginMarkdown(report, runtime)
+        ? renderPluginJson(report, runtime, review)
+        : renderPluginMarkdown(report, runtime, review)
     },
   })
 }

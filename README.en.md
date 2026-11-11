@@ -25,7 +25,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Every problem comes with a prescription.** 🔧 auto-fixable / 🖥 one command / ✍️ human only, clearly separated. Truncated descriptions get a **rewrite worksheet** (trigger skeleton + budget): the model drafts, you confirm before it is written — the loop from diagnosis to fix stays closed.
 - **Tells whether a plugin really started, not just installed.** Reads the runtime fiber phase and names bundles that failed; when it cannot check, it says so instead of implying "no problems".
 - **Consults across layers.** "0 skills" does not mean the skills broke — the plugin report lists every patch that touched the skill chain (who → which entry → which key), and the skill report points back at the plugin layer when it comes up empty.
-- **Usable straight from the composer, without the model.** Type `/` for a group of Chinese entries (体检 / 查目录 / 改写 / 复诊 / 诊断 / 会诊); picking one yields a blue chip and Enter runs it locally — fast, and nothing gets reworded in transit. The six panel buttons write these same commands.
+- **Usable straight from the composer, without the model.** Type `/` for a group of Chinese entries (体检 / 查目录 / 改写 / 复诊 / 诊断 / 会诊 / 审查); picking one yields a blue chip and Enter runs it locally — fast, and nothing gets reworded in transit. The seven panel buttons write these same commands.
 - **Live activity in the session.** A bar above the composer shows which skill the model just loaded and which tools it is calling.
 - **Keeps a record, so checkups can be compared.** Run it again after fixing 11 oversized descriptions and the report should not still read "2 left" — it diffs against the last record and tells you "11 fixed, 1 new". On by default, no configuration.
 - **Shows which skills the model never uses.** The panel's Usage tab ranks skills by load count across sessions — the dynamic evidence static checks cannot give you.
@@ -97,11 +97,11 @@ so only tool names are shown.
 
 The panel reads the current session window, so **calls that scrolled out are gone**; entries it has seen are kept, so totals never go backwards. The footer says so.
 
-The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: six buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation) — click one, it highlights and puts the matching `/command ` into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
+The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: seven buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation, plugin review) — click one, it highlights and puts the matching `/command ` into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
 
 ## Slash commands (the fastest entry point in the client)
 
-Six commands ship with the plugin. Type `/` — the menu gains a Chinese group; pick one and it becomes a **blue chip** in the composer, add the argument and press enter. They run **without the model**, so they are instant and cannot be reworded:
+Seven commands ship with the plugin. Type `/` — the menu gains a Chinese group; pick one and it becomes a **blue chip** in the composer, add the argument and press enter. They run **without the model**, so they are instant and cannot be reworded:
 
 | Menu | Composer | What it does |
 |---|---|---|
@@ -111,6 +111,7 @@ Six commands ship with the plugin. Type `/` — the menu gains a Chinese group; 
 | 复诊 | `/followup` | Diff against the previous checkup |
 | 诊断 | `/why <skill>` | Why one skill is not being picked, with a concrete fix |
 | 会诊 | `/clash` | Whether a plugin broke the skill-directory config |
+| 审查 | `/review <pkg>` | Static risk hints for a newly installed plugin and its conflicts with installed ones; empty reads the last automatic review |
 
 Output is plain text (one node in the flow, no Markdown tables), so it is trimmed to "what to look at first":
 
@@ -129,7 +130,7 @@ For the full report with prescriptions, still ask the model to run `skill_doctor
 
 **Why the menu is Chinese but the composer is ASCII**: the menu column comes from the plugin, so it has no character-set limit; turning composer text into a chip goes through dsh's `TEXT_REF_RE = /(^|\s)([/@])([\w-]+)/g`, and **JS `\w` is `[A-Za-z0-9_]` only**, so a Chinese name never matches. A Chinese chip is therefore impossible on the current dsh — this release keeps the chip and puts Chinese in the menu. The tokens come from a **reference source** registered via `ctx.inputTriggers.registerSource` (the same mechanism as a skill's `/name`), and are handed to the command verbatim on submit.
 
-Panel buttons write these same six tokens: clicking 复诊对比 puts `/followup ` into the composer.
+Panel buttons write these same seven tokens: clicking 复诊对比 puts `/followup ` into the composer.
 
 > If dsh ever widens that regex to `\p{L}`, switch the candidates' `token` back to Chinese in `src/source.ts`; nothing else changes.
 
@@ -235,7 +236,7 @@ Explains why a skill is missing, never selected, or failing to load: winning pro
 | SD014 | info | file uses CRLF |
 | SD015 | warn | resource reference contains path traversal |
 
-> SD012 is heuristic: a hit is not a malware verdict. It does not replace a security review.
+> SD012 is heuristic: a hit is not a malware verdict. It does not replace a security review; the same holds for RV001-RV012 in the plugin review below.
 
 ## CLI
 
@@ -253,6 +254,33 @@ npx --package dsh-skill-doctor dsh-skill-lint . --json --warn-as-error
 # plugin check (reads the profile directory directly)
 npx --package dsh-skill-doctor dsh-skill-lint --plugins --profile desktop
 ```
+
+### Newly installed plugin review (static heuristics, not a verdict)
+
+A read-only pass over an **already unpacked** plugin directory (usually `<profile>/node_modules/<pkg>`) answering two questions:
+
+- **Static risk hints**: reads `package.json` (`dsh`, `scripts`, dependencies), `cordis.patch.yml` (insert ids and config keys) and the package text, then applies RV001-RV012: install-time download/execute, credential paths, non-registry dependencies, near-miss official scope, loader id collisions, skill-chain edits, remote execution pipes, dynamic execution, invisible characters, size caps, YAML anchors.
+- **Conflict focus**: reuses `plugin_doctor`'s PL001-PL006 and lists only the conflicts involving this package, naming the other plugin.
+
+Three entry points:
+
+```bash
+# Git Bash; exit code is always 0 (only a missing directory / bad argument returns 2)
+npx --package dsh-skill-doctor dsh-skill-lint --review <plugin-dir> --json
+```
+
+```text
+/review <pkg>     slash command; with no argument it reads the last automatic review
+```
+
+The model can also call `plugin_doctor` with `review: "<pkg>"`, which adds an "Installation review" section and a `review` field in JSON.
+
+**Boundaries (more important than the rule list)**:
+
+- These are **static heuristic hints, not a security verdict**. They do not replace a security review and do not decide whether code is malicious. `eval`, `child_process` and `postinstall` appear in almost every bundled artifact, so those rules are deliberately `info`; a hit is not a malware verdict. No AST, sandbox or dependency supply-chain audit.
+- No install interception, rollback or deletion; no code from the reviewed package is executed. Only `readFile`.
+- Directories only, **no `.tgz` parsing**; the package's inner `node_modules` is skipped; single files over 2 MiB, bundles over 10 MiB and more than 500 files are skipped and noted in the report.
+- **Automatic triggering is unverified**: the plugin best-effort subscribes to `plugin-manager/changed`, but that event's payload has only `reason` and **no package name**, official docs say CLI installs and manual edits do not emit it, and whether a third-party plugin can subscribe (ACL / type visibility) has not been verified in a real dsh build. If the service cannot be probed, subscription is skipped entirely; results go to an in-memory cache plus one log line, read via `/review`. **Do not rely on it as a gate.**
 
 ### Auto-fix
 
@@ -443,7 +471,7 @@ Capability boundaries, not omissions:
 - **Why a plugin failed** — the runtime snapshot projects the fiber phase, not the error, and dsh writes no startup log to disk.
 - **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `roots` at that directory to scan files directly.
 - **Whether a skill is well written** — not judged. Auto-fix covers two byte-level rules only.
-- **No install interception** — the plugin hooks no install action and never refuses a write because of a rule; use the CLI pre-install self-check above if you want a gate. The announcement budget also reports measured numbers only, without an exceeded verdict.
+- **No install interception** — the plugin hooks no install action and never refuses a write because of a rule; the new plugin review is likewise read-only and never rejects, rolls back or deletes. Use the CLI pre-install self-check above if you want a gate. The announcement budget also reports measured numbers only, without an exceeded verdict.
 - **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
 - **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
 - **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
@@ -498,9 +526,9 @@ Three kinds of skill-adjacent plugins exist, and they answer different questions
 
 - **Managers** (browse, search, import/export, delete skills): "where are my skills, how do I add or remove one".
 - **Usage boards** (skill scoreboards, call-count rankings): "how often is it used". This plugin's panel counts loads too, but as evidence for diagnosis, not as a long-term dashboard.
-- **Plugin auditors** (ecosystem scoring, route auth, pre-install gating): "is this plugin safe, can I install it".
+- **Plugin auditors** (ecosystem scoring, route auth, pre-install gating): "is this plugin safe, can I install it" — and **refuse** the install when it is not.
 
-This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. Safety heuristics are limited to SD012, and pre-install gating is deliberately out of scope (that belongs to precheck-style plugins).
+This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. Safety hints come from two heuristic groups, SD012 and the new RV001-RV012; both **only hint, never conclude and never block**. There is no malware verdict, no AST/sandbox/supply-chain audit, and no pre-install gating (that belongs to precheck-style plugins).
 
 From 0.14.0 the second row also mounts external skill directories, but only as read-only discovery: no browsing, add/remove, import/export, marketplace or hot reload. If `dsh-skill-compat-plus` is installed separately, both providers can coexist (different default names).
 
@@ -523,7 +551,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 285 tests
+npm test          # 325 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```
