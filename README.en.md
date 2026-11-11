@@ -40,7 +40,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@0.15.0`.
+That installs the latest version; pin it by appending a version, e.g. `@0.16.0`.
 
 From 0.14.0 the plugin page shows **two component rows** (checkup / external skill sources), each with its own switch. The second row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
