@@ -527,44 +527,35 @@ export function getLastReview(): ReviewResult | undefined {
  *    绝不猜。
  * 2. 官方文档 `docs/subsystems/boot.zh.md:274` 明写「CLI 或手工编辑引发的 HMR
  *    patch 不会发这个事件」，所以自动审查只覆盖插件页安装。
- * 3. 事件在 `API_REMOTE_FORWARDED_EVENTS` 里是 `mode:'emit'` 且无 `resources`
- *    声明，注释说「只有访问控制允许时才到达非 owner Peer」。第三方插件能否订阅
- *    **尚未验证**，因此这里用 `ctx.get(name, false)` 软探测，绝不把 `remote`
- *    写进 `inject`（硬注入会让 CLI / 老版本 dsh 里整个插件加载失败）。
+ * 3. 订阅走**进程内的 Cordis 事件表**（`ctx.on`），不是 Web 侧的转发面。
+ *    这一点曾经被误判成「有 ACL 风险」，实际不是：`Context.extend()` 用
+ *    `Object.create(parent)` 建子上下文（`vendor/cordis/src/context.ts:99-101`），
+ *    而 `events` 是 root 的 own property（`context.ts:81`），所以整棵 ctx 树
+ *    解析到**同一个** EventsService，`_hooks` 是一张全局表；`emit` 的首参数是
+ *    事件名（不是带 `Context.filter` 的对象）时不做上下文过滤
+ *    （`vendor/cordis/src/events.ts:165-175`）。因此任何 ctx 上的监听都能收到
+ *    任何 ctx 的 emit，与加载顺序、是否兄弟上下文无关，也不需要 inject。
+ *    带访问控制的是 `ctx.remote.$on`，那属于渲染进程（`packages/api/gateway/
+ *    src/client/remote-events.ts` 的 ClientRemoteEvents），Host 插件不该走。
+ *    `ctx.on` 是 Cordis 内建方法，所以也无需软探测后降级到别的通道；
+ *    只有它在（不可能）时才跳过，`inject` 始终不加 `remote`。
  *
  * 结果不主动推给会话：放模块级缓存 + 一行 logger.info，由 `/review`、
  * CLI `--review` 或 `plugin_doctor` 主动查。这样既不打扰用户，也不依赖未验证的
  * 「往会话注入消息」API。
  */
 export function registerInstallWatch(ctx: Context): void {
-  // 用最小的结构化断言，绕开两件事：
-  // - `remote` 服务与本事件的 `Events` 类型增强在 doctor 的编译期不一定可见；
-  // - 老版本 dsh 可能压根没有这些服务。断言后逐个检查 typeof，缺一个就跳过。
+  // 只需要 `ctx.on`：它是 Cordis 内建的事件注册方法，必然存在。这里仍用结构化
+  // 断言而不是 `ctx.on(...)` 直接调用，只为两件事：
+  // - 本事件的 `Events` 类型增强在 doctor 的编译期不一定可见（不 import
+  //   `@deepseek-ai/dsh-plugin-manager` 就拿不到声明合并），断言后不必用 as any；
+  // - 老到没有事件服务的运行时里，缺 on 就整段跳过，而不是抛出把插件加载搞挂。
   const probe = ctx as unknown as {
-    get?: (name: string, strict?: boolean) => unknown
     on?: (event: string, handler: (change: unknown) => void) => unknown
-    effect?: (dispose: () => void, key?: string) => void
     logger: { info: (message: string) => void; warn: (message: string) => void }
   }
 
-  let subscribe: ((event: string, handler: (change: unknown) => void) => unknown) | undefined
-  try {
-    const remote = typeof probe.get === 'function'
-      ? probe.get.call(ctx, 'remote', false) as { $on?: unknown } | undefined
-      : undefined
-    if (remote !== undefined && typeof remote.$on === 'function') {
-      // Web 消费端转发面：`ctx.remote.$on`。
-      subscribe = (remote.$on as (event: string, handler: (change: unknown) => void) => unknown)
-        .bind(remote)
-    } else if (typeof probe.on === 'function') {
-      // Host 侧 Cordis 事件面：`ctx.on`（官方 manager.spec.ts 用的就是它）。
-      subscribe = probe.on.bind(ctx) as typeof subscribe
-    }
-  } catch {
-    subscribe = undefined
-  }
-
-  if (subscribe === undefined) {
+  if (typeof probe.on !== 'function') {
     probe.logger.info('skill-doctor: install-watch unavailable — automatic review disabled, use /review instead')
     return
   }
@@ -607,12 +598,15 @@ export function registerInstallWatch(ctx: Context): void {
   }
 
   try {
-    const disposer = subscribe('plugin-manager/changed', handler)
-    // 若订阅返回清理函数，按 source.ts 的范式交给 ctx.effect，fiber 卸载时注销。
-    // effect 缺失或订阅没返回清理函数时，只保留订阅并记 note，不抛错。
-    if (typeof disposer === 'function' && typeof probe.effect === 'function') {
-      probe.effect(disposer as () => void, 'skill-doctor-install-watch')
-    }
+    // 只订阅，**不要**把返回值再交给 `ctx.effect`。
+    //
+    // `ctx.on` 内部已经用 `this.ctx.fiber.effect(...)` 注册了注销
+    // （`vendor/cordis/src/events.ts:254-260`），返回的就是 disposer 本身；
+    // 而 `ctx.effect(callback)` 接收的是「**返回** disposer 的函数」
+    // （`vendor/cordis/src/fiber.ts:83-93`），会立刻调用 callback。
+    // 把 disposer 传进去等于当场执行注销——监听刚注册就被删掉，
+    // 自动审查永远不会触发，而且全程不报错，只有「装完没反应」这一种表现。
+    probe.on.call(ctx, 'plugin-manager/changed', handler)
   } catch (error) {
     probe.logger.warn(
       `skill-doctor: cannot subscribe to plugin-manager/changed: ${error instanceof Error ? error.message : String(error)}`,

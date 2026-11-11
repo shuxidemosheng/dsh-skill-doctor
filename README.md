@@ -380,7 +380,7 @@ npx --package dsh-skill-doctor dsh-skill-lint --review <插件目录> --json
 - 这是**静态启发式风险提示，不是安全结论**。不替代安全审查、不判定恶意代码。`eval`、`child_process`、`postinstall` 在正常打包产物里几乎必然出现，这类规则刻意只给 `info`；命中不等于恶意。不做 AST / 沙箱 / 依赖供应链审计。
 - 不拦截安装、不回滚、不删文件、不执行被审包的代码，全程只有 `readFile`。
 - 只支持已解压的目录，**不解析 `.tgz`**；不递归包内部的 `node_modules`；单文件 2 MiB、整包 10 MiB、500 文件以上的部分跳过并在报告里说明。
-- **自动触发尚未验证**：插件会尽力订阅 `plugin-manager/changed`，但该事件的 payload 只有 `reason`、**不含包名**，且官方文档说明 CLI 安装与手工编辑不会发这个事件；第三方插件能否订阅该事件（ACL / 类型可见性）尚未在真实 dsh 里验证。所以订阅探测不到就完全跳过，结果只放内存缓存并写一行日志，由 `/review` 主动查——**不要依赖它做门禁**。
+- **自动触发只覆盖插件页安装**：订阅的是 `plugin-manager/changed`。该事件的 payload 只有 `reason`、**不含包名**，所以靠 `scanProfile` 前后 `bundles` 差集定位新包；官方文档说明 CLI 安装与手工编辑不会发这个事件。订阅走进程内的 Cordis 事件表（`ctx.on`）——这张表在整棵上下文树里是同一个实例，与加载顺序、是否兄弟上下文都无关，`tests/review.spec.ts` 用真实 `Context` 锁住了这条前提，并有一条端到端用例（发射事件 → 差集 → 出审查结果）。**但整条链路还没在真实 dsh 进程里跑过**：装上后先看日志有没有 `skill-doctor: install-watch unavailable`，出现就说明订阅没建起来。结果只放内存缓存并写一行日志，由 `/review` 主动查——**不要依赖它做门禁**。
 
 ### 自动修复
 

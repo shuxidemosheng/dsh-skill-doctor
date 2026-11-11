@@ -7,7 +7,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   focusConflicts,
   getLastReview,
@@ -312,53 +312,124 @@ describe('registerInstallWatch degrades safely', () => {
         info: (message: string) => infos.push(message),
         warn: (message: string) => warns.push(message),
       },
-      get: (_name: string) => undefined,
       ...extra,
     }
     return { ctx, infos, warns }
   }
 
-  it('skips completely when neither remote nor on is available', () => {
+  it('skips completely when the runtime has no event service', () => {
     const { ctx, infos } = fakeCtx()
     expect(() => registerInstallWatch(ctx as never)).not.toThrow()
     expect(infos.some(message => message.includes('install-watch unavailable'))).toBe(true)
   })
 
-  it('subscribes through ctx.remote.$on when a remote service exists', () => {
-    let subscribed = false
-    const remote = { $on: () => { subscribed = true; return () => {} } }
-    const { ctx } = fakeCtx({ get: () => remote })
-    registerInstallWatch(ctx as never)
-    expect(subscribed).toBe(true)
-  })
-
-  it('falls back to ctx.on when no remote service exists', () => {
-    let event = ''
-    const { ctx } = fakeCtx({ on: (name: string) => { event = name; return undefined } })
-    registerInstallWatch(ctx as never)
-    expect(event).toBe('plugin-manager/changed')
-  })
-
-  it('registers a disposer with ctx.effect when subscription returns one', () => {
-    let effectKey = ''
-    const remote = { $on: () => () => {} }
+  it('subscribes through ctx.on and never touches the client-only remote service', () => {
+    const events: string[] = []
     const { ctx } = fakeCtx({
-      get: () => remote,
-      effect: (_dispose: () => void, key: string) => { effectKey = key },
+      // 就算上下文里出现了 remote，也不该被使用：`$on` 属于渲染进程的转发面，
+      // 带访问控制；Host 插件只走进程内的事件表。
+      get: () => ({ $on: () => { throw new Error('remote must not be used') } }),
+      on: (name: string) => { events.push(name) },
     })
     registerInstallWatch(ctx as never)
-    expect(effectKey).toBe('skill-doctor-install-watch')
+    expect(events).toEqual(['plugin-manager/changed'])
+  })
+
+  it('never hands the disposer to ctx.effect (that unsubscribes immediately)', () => {
+    // 回归用例：`ctx.on` 返回的是 disposer，而 `ctx.effect(cb)` 会立刻调用 cb。
+    // 旧实现把返回值交给 effect，监听刚注册就被删掉，且全程不报错。
+    let effectCalls = 0
+    let listener: unknown
+    const { ctx } = fakeCtx({
+      effect: () => { effectCalls++ },
+      on: (_name: string, handler: unknown) => { listener = handler },
+    })
+    registerInstallWatch(ctx as never)
+    expect(effectCalls).toBe(0)
+    expect(typeof listener).toBe('function')
   })
 
   it('swallows a throwing subscription without affecting the caller', () => {
-    const { ctx, warns } = fakeCtx({ on: () => { throw new Error('ACL denied') } })
+    const { ctx, warns } = fakeCtx({ on: () => { throw new Error('boom') } })
     expect(() => registerInstallWatch(ctx as never)).not.toThrow()
     expect(warns.some(message => message.includes('cannot subscribe'))).toBe(true)
   })
+})
 
-  it('records a note rather than throwing when get() fails', () => {
-    const { ctx, infos } = fakeCtx({ get: () => { throw new Error('no service') } })
-    expect(() => registerInstallWatch(ctx as never)).not.toThrow()
-    expect(infos.some(message => message.includes('install-watch unavailable'))).toBe(true)
+/**
+ * 订阅能力的**前提**是 Cordis 的事件表在整棵 ctx 树里共享。这里用真实 Context
+ * 把它钉死：上游若改事件作用域，这里先红，而不是等线上「装完没反应」。
+ *
+ * 依据（vendor/cordis/src/context.ts:99-101）：`extend()` 用 `Object.create(parent)`
+ * 建子上下文，`events` 是 root 的 own property（:81），因此所有 ctx 解析到同一个
+ * EventsService，`_hooks` 是一张全局表；`emit` 首参数是事件名时不做过滤
+ * （events.ts:165-175）。
+ */
+describe('cordis event semantics behind install watch', () => {
+  it('delivers an event between sibling contexts', async () => {
+    const { Context } = await import('@deepseek-ai/cordis')
+    const root = new Context()
+    // 模拟 plugin-manager 与 doctor 分别是 root 下互不相干的两个子上下文。
+    const manager = root.extend()
+    const doctor = root.extend()
+    const seen: unknown[] = []
+    const on = (doctor as unknown as { on: (name: string, cb: (change: unknown) => void) => unknown }).on
+    on.call(doctor, 'plugin-manager/changed', change => { seen.push(change) })
+    ;(manager as unknown as { emit: (name: string, payload: unknown) => void })
+      .emit('plugin-manager/changed', { reason: 'install' })
+    expect(seen).toEqual([{ reason: 'install' }])
+  })
+
+  it('reviews a newly added bundle end to end after a real ctx emits the event', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'dsh-watch-'))
+    const previous = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      const profileDir = join(home, 'profiles', 'desktop')
+      const writeProfile = async (bundles: string[]): Promise<void> => {
+        const dependencies = Object.fromEntries(bundles.map(name => [name, '1.0.0']))
+        await writeFile(
+          join(profileDir, 'package.json'),
+          JSON.stringify({ name: 'dsh-profile-desktop', dependencies, dsh: { profile: { bundles } } }),
+          'utf8',
+        )
+      }
+      const addBundle = async (name: string): Promise<void> => {
+        const dir = join(profileDir, 'node_modules', name)
+        await mkdir(dir, { recursive: true })
+        await writeFile(join(dir, 'package.json'), JSON.stringify({ name, version: '1.0.0' }), 'utf8')
+      }
+
+      await addBundle('a')
+      await writeProfile(['a'])
+
+      const { Context } = await import('@deepseek-ai/cordis')
+      const root = new Context()
+      const manager = root.extend()
+      const doctor = root.extend()
+      // 清掉模块级缓存，避免与其他用例的执行顺序耦合。
+      setLastReview(undefined as never)
+      registerInstallWatch(doctor as never)
+
+      const emit = (): void => {
+        ;(manager as unknown as { emit: (name: string, payload: unknown) => void })
+          .emit('plugin-manager/changed', { reason: 'install' })
+      }
+
+      // 第一次事件只建立基线：启动时已有的包不是「刚下载的」。
+      emit()
+      await new Promise(resolve => setTimeout(resolve, 120))
+      expect(getLastReview()).toBeUndefined()
+
+      // 新增一个包，再发一次事件。
+      await addBundle('b')
+      await writeProfile(['a', 'b'])
+      emit()
+      await vi.waitFor(() => { expect(getLastReview()?.pkg).toBe('b') }, { timeout: 4000 })
+    } finally {
+      if (previous === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = previous
+      await rm(home, { recursive: true, force: true })
+    }
   })
 })
