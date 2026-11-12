@@ -32,6 +32,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
 - **One plugin, three component rows, switched independently.** The second row mounts Claude Code / Codex / ZCode skill directories into dsh; the third is the install gate — switch it off in the plugin page when you knowingly want to install a plugin it would refuse. Diagnosis stays the main job; the other two rows are optional.
+- **The gate has a per-package way out.** Being refused does not mean uninstalling: `/doctor trust <pkg>` adds that package to the trust list, after which the gate **still inspects it fully and still lists every finding**, it just does not refuse — and the report says the release came from trust. `/doctor untrust` revokes it. The list lives at `$DSH_HOME/skill-doctor/trusted.json`, keyed by package name (not version), and takes effect without a restart.
 - **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
 
 ## Install
@@ -105,7 +106,7 @@ Eight commands ship with the plugin. Type `/` — the menu gains a Chinese group
 
 | Menu | Composer | What it does |
 |---|---|---|
-| 体检 | `/doctor` | Check every skill for breakage and visibility, merging repeated findings into one cause |
+| 体检 | `/doctor` | Check every skill for breakage and visibility, merging repeated findings into one cause. `/doctor trust [pkg]` manages the install gate's trust list (bare form lists it, `/doctor untrust <pkg>` revokes) |
 | 查目录 | `/scope <dir>` | Check only the directory you name |
 | 改写 | `/rewrite <skill>` | Draft a rewrite for an oversized description, with budget and cut-off triggers |
 | 复诊 | `/followup` | Diff against the previous checkup |
@@ -400,6 +401,8 @@ When the plugin page refuses an install, the dialog names both ways out: `/docto
 
 Invalid config makes the plugin log one warning and disable itself — it **never blocks session creation**.
 
+The install gate is **not part of this config**: it is its own component row (`skill-doctor-gate`), switched from the plugin page. The old `installGate` key is still accepted but no longer takes effect, and logs a migration hint.
+
 ## External skill sources (optional second row)
 
 From 0.14.0 the package exposes component rows in the plugin page, each with its own switch (the first two also carry their own `config`). There are **three** today:
@@ -523,7 +526,7 @@ Capability boundaries, not omissions:
 - **Why a plugin failed** — the runtime snapshot projects the fiber phase, not the error, and dsh writes no startup log to disk.
 - **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `roots` at that directory to scan files directly.
 - **Whether a skill is well written** — not judged. Auto-fix covers two byte-level rules only.
-- **Plugin-page installs are not gated** — `--review` is read-only and never rejects, rolls back or deletes. Only `--gate` / `/install` refuse, and only for installs they start themselves. The announcement budget also reports measured numbers only, without an exceeded verdict.
+- **Command-line installs cannot be gated** — plugin-page and model-tool installs go through the wrapped `installBundle`, so they **are** covered; `dsh plugin add` and a manual `pnpm install` after editing `package.json` write through the package manager without touching that service, so they cannot be. `--review` stays read-only and never rejects, rolls back or deletes. The announcement budget reports measured numbers only, without an exceeded verdict.
 - **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
 - **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
 - **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
@@ -580,7 +583,7 @@ Three kinds of skill-adjacent plugins exist, and they answer different questions
 - **Usage boards** (skill scoreboards, call-count rankings): "how often is it used". This plugin's panel counts loads too, but as evidence for diagnosis, not as a long-term dashboard.
 - **Plugin auditors** (ecosystem scoring, route auth, pre-install gating): "is this plugin safe, can I install it" — and **refuse** the install when it is not.
 
-This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. It has two hint groups (SD012, RV001-RV012) that never conclude, and three gate rules (GT001-GT003) that refuse only installs started through `--gate` / `/install`. There is no malware verdict and no full supply-chain audit; plugin-page installs are not intercepted.
+This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. It has two hint groups (SD012, RV001-RV012) that never conclude, and three gate rules (GT001-GT003) that refuse on a hit and can be released per package through the trust list. There is no malware verdict and no full supply-chain audit; `dsh plugin add` and a manual `pnpm install` after editing `package.json` are outside the gate.
 
 From 0.14.0 the second row also mounts external skill directories, but only as read-only discovery: no browsing, add/remove, import/export, marketplace or hot reload. If `dsh-skill-compat-plus` is installed separately, both providers can coexist (different default names).
 
