@@ -22,6 +22,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { registerCommands } from './commands.js'
 import { registerInstallWatch } from './plugins/review.js'
+import { registerInstallGate } from './plugins/gate.js'
 import { resolveConfig } from './config.js'
 import type { Config } from './config.js'
 import { buildDoctorTool } from './tools/doctor.js'
@@ -84,6 +85,16 @@ export function apply(ctx: Context, config: Config | undefined): void {
   } catch (error) {
     ctx.logger.warn(
       `skill-doctor: install watch unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+
+  // 插件页安装门禁：包装 plugin-manager 服务上的 installBundle（插件页走同一个实例）。
+  // 同样放在 try 里——门禁装不上也绝不能让体检功能跟着挂掉。
+  try {
+    registerInstallGate(ctx, resolved.installGate)
+  } catch (error) {
+    ctx.logger.warn(
+      `skill-doctor: install gate unavailable: ${error instanceof Error ? error.message : String(error)}`,
     )
   }
 }

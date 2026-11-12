@@ -595,3 +595,131 @@ export async function installAfterGate(
   }
   return lines
 }
+
+/** 包装标记：避免热重载时把同一个方法包两层，也用于还原时判断是否还是自己那层。 */
+const WRAP_MARK = '__skillDoctorInstallGate'
+
+type ManagedService = {
+  installBundle: (spec: string, options?: unknown) => Promise<unknown>
+  [key: string]: unknown
+}
+
+/**
+ * 给**插件页**的安装装一道门。
+ *
+ * ## 为什么这样可以拦住插件页
+ *
+ * 插件页不是绕过服务，而是通过 remote 调 `pluginManager` 这**同一个实例**上的
+ * `installBundle`（官方源码 `src/index.ts:496` 的 `@Remote` 方法）。把实例上的
+ * 该方法替换成「先审再决定」，插件页的点击就会经过它。
+ *
+ * 这一点是实测出来的，不是推断：在已装包上包装 `setBundleEnabled` 后，插件页
+ * 开关组合包时探针收到了 `** setBundleEnabled CALLED`，说明 remote 分发是
+ * 按实例属性取方法的，替换有效。`installBundle` 与它同类同机制。
+ *
+ * ## 三条策略，与主动门禁刻意不同
+ *
+ * | 情况 | `--gate` / `/install` | 这里（被动经过） |
+ * |---|---|---|
+ * | 命中 GT 规则 | 拒绝 | 拒绝 |
+ * | 未完成审查（网络/解析失败） | 拒绝（fail closed） | **放行 + 记 warn** |
+ * | 包装自身异常 | — | **放行 + 记 warn** |
+ *
+ * 差别的原因：插件页是用户点一下就走的路，一次网络抖动或本插件自己的 bug
+ * 不该让**任何插件都装不上**，而且用户未必知道是 doctor 导致的。阻断必须建立
+ * 在「确实看到了高危结构」上，而不是「我没查成」。
+ *
+ * ## 仍然拦不住的
+ *
+ * CLI 的 `dsh plugin add`、手改 `package.json` 后的 `pnpm install` 都不经过这个
+ * 服务，属于包管理器的写入路径，这里无法覆盖。
+ */
+export function registerInstallGate(
+  ctx: Context,
+  mode: 'block' | 'off',
+  /** 测试可注入审查函数，跳过网络；生产调用方不传，默认用 gateSpec。 */
+  inspect?: (spec: string) => Promise<GateResult>,
+): void {
+  const probe = ctx as unknown as {
+    get?: (name: string, strict?: boolean) => unknown
+    effect?: (callback: () => () => void, key?: string) => void
+    logger: { info: (message: string) => void; warn: (message: string) => void }
+  }
+
+  if (mode === 'off') {
+    probe.logger.info('skill-doctor: install gate disabled by config (installGate: off)')
+    return
+  }
+
+  let manager: ManagedService | undefined
+  try {
+    manager = typeof probe.get === 'function'
+      ? probe.get.call(ctx, 'pluginManager', false) as ManagedService | undefined
+      : undefined
+  } catch {
+    manager = undefined
+  }
+  if (manager === undefined || typeof manager.installBundle !== 'function') {
+    // 软探测：不写进 inject，否则 CLI / 老版本 dsh 会整个插件加载失败。
+    probe.logger.info('skill-doctor: install gate unavailable — no pluginManager service; plugin-page installs are not gated')
+    return
+  }
+  if (manager[WRAP_MARK] === true) {
+    probe.logger.info('skill-doctor: install gate already active')
+    return
+  }
+
+  const original = manager.installBundle
+  const runGate = inspect ?? gateSpec
+
+  const wrapped = async (spec: string, options?: unknown): Promise<unknown> => {
+    let gate: GateResult
+    try {
+      gate = await runGate(String(spec))
+    } catch (error) {
+      probe.logger.warn(
+        `skill-doctor: install gate skipped (${reasonOf(error)}); installing without inspection`,
+      )
+      return original.call(manager, spec, options)
+    }
+
+    if (gate.decision === 'block') {
+      const ids = gate.findings.map(finding => finding.id).join('、')
+      const detail = gate.findings[0]?.detail ?? ''
+      // 返回 ChangeResult 形状的失败结果，让插件页显示具体原因，而不是通用报错。
+      return {
+        changed: false,
+        application: 'failed',
+        stage: 'install',
+        target: String(spec),
+        error: {
+          code: 'operation-error',
+          diagnostic: `安装门禁拒绝：${ids}。${detail} 若确认是误报，可在 profile 的 cordis.patch.yml 里给 skill-doctor 那一行加 config.installGate: off 后重启。`,
+        },
+      }
+    }
+
+    if (gate.decision === 'error') {
+      // 未完成审查不等于有问题：放行，但必须留痕，别让人以为已经查过。
+      probe.logger.warn(
+        `skill-doctor: install gate could not inspect ${spec} (${gate.problem ?? 'unknown'}); installing without inspection`,
+      )
+    }
+    return original.call(manager, spec, options)
+  }
+
+  manager.installBundle = wrapped
+  manager[WRAP_MARK] = true
+
+  const restore = (): void => {
+    if (manager.installBundle === wrapped) manager.installBundle = original
+    delete manager[WRAP_MARK]
+  }
+  try {
+    // ctx.effect 接收的是「**返回** disposer 的函数」，所以这里返回 restore 本身，
+    // 而不是把 restore 当成 disposer 直接传进去（那样会被立刻执行）。
+    probe.effect?.call(ctx, () => restore, 'skill-doctor-install-gate')
+  } catch {
+    // 没有 effect 就保留包装：实例随上下文销毁，不会泄漏到别的 profile。
+  }
+}

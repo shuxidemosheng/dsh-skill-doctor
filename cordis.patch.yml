@@ -21,6 +21,10 @@
       config:
         maxDescriptionLength: 500
         maxBodyTokens: 8000
+        # 插件页安装门禁：block（默认，命中 GT 高危规则就拒绝）| off（完全关闭）。
+        # 只覆盖经由 plugin-manager 服务的安装；CLI dsh plugin add 与手改
+        # package.json 后的 pnpm install 不经过它。误报时改成 off 再重启即可。
+        # installGate: block
 
     - id: skill-doctor-compat
       name: dsh-skill-doctor/compat

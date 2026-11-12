@@ -420,7 +420,8 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 
 **边界（比规则清单更重要）**：
 
-- **只覆盖这两个新入口。** 插件页的安装走 `plugin-manager` 自己的链路，doctor 不在写入链路上，拦不住。要用门禁就必须改用 `--gate` 配脚本，或用 `/install`。
+- **覆盖插件页，但拦不住命令行。** 插件页的安装会经过 `plugin-manager` 服务实例上的 `installBundle`，doctor 包装了该方法，所以**插件页与模型调 `plugin_manager` 都会被拦住**。这一点是实测的：在真实 dsh 里包装 `setBundleEnabled` 后，插件页开关组合包确实经过包装（remote 按实例属性取方法）。但 CLI 的 `dsh plugin add`、手改 `package.json` 后的 `pnpm install` 不经过服务，属于包管理器的写入路径，**无法覆盖**。
+- **被动经过时放行优先。** 插件页那条路只对「命中 GT 规则」阻断；取不到包、网络失败或包装自身出错时**放行并记一条 warn**——一次网络抖动不该让你什么都装不上，而且你未必知道是 doctor 导致的。主动入口（`--gate` / `/install`）仍然 fail closed。误报时把 `installGate` 设为 `off` 即可关闭门禁，不必卸载插件。
 - **会绕过官方审批链。** `/install` 直接调 `ctx.pluginManager.installBundle`，不会经过 `plugin_manager` 工具的 `danger-full-access` / 单次批准（那层检查在 tool 层），等于以宿主进程权限安装并执行允许的构建脚本。这是自动门禁的代价，用之前要接受。
 - **审的和装的是同一个精确版本。** `--gate` 只接受包名、精确版本或 dist-tag，拒绝 `^1`、`~1`、`1.x` 这类范围表达式；解析出确切版本后，`/install` 用 `name@exactVersion` 安装。但 tarball 来自 `~/.npmrc` 的 registry，而 `installBundle` 内部由 pnpm 自行下载，**无法保证 100% 是同一份字节**。
 - **不落盘、不执行被审包的代码、不删文件。** tarball 在内存里解压，手写 tar 解析读文本；没有临时目录，也就没有清理动作。
@@ -681,7 +682,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 353 个用例
+npm test          # 362 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

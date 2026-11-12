@@ -25,6 +25,12 @@ export interface Config {
    * 也接受具体文件路径（支持 ~）或 `off`（显式关闭，不写任何病历）。
    */
   baseline?: string
+  /**
+   * 插件页安装门禁：`block`（默认）在命中 GT 高危规则时拒绝安装；
+   * `off` 完全关闭。注意它只覆盖经由 plugin-manager 服务的安装，
+   * CLI 的 dsh plugin add 与手改 package.json 后的 pnpm install 不经过它。
+   */
+  installGate?: 'block' | 'off'
 }
 
 /** 解析后的配置，所有字段必填。 */
@@ -39,6 +45,8 @@ export interface ResolvedConfig {
   readonly excludeProviders: readonly string[]
   /** `auto`（默认）/ 文件路径 / `off`。 */
   readonly baseline: string
+  /** 插件页安装门禁：block（默认）或 off。 */
+  readonly installGate: 'block' | 'off'
 }
 
 const SEVERITIES: readonly Severity[] = ['info', 'warn', 'error']
@@ -52,6 +60,7 @@ const KNOWN_KEYS = new Set<keyof Config>([
   'includeProviders',
   'excludeProviders',
   'baseline',
+  'installGate',
 ])
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -117,6 +126,15 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     baseline = raw.baseline.trim()
   }
 
+  // 默认 block：门禁的价值在于默认生效；误报时用 off 关掉即可，不必卸载插件。
+  let installGate: 'block' | 'off' = 'block'
+  if (raw.installGate !== undefined) {
+    if (raw.installGate !== 'block' && raw.installGate !== 'off') {
+      throw new Error('installGate must be "block" or "off"')
+    }
+    installGate = raw.installGate
+  }
+
   let rules: Partial<Record<RuleId, Severity | 'off'>> = {}
   if (raw.rules !== undefined) {
     if (!isPlainObject(raw.rules)) throw new Error('rules must be an object')
@@ -141,6 +159,7 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     includeProviders,
     excludeProviders,
     baseline,
+    installGate,
   }
 }
 

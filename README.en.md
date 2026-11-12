@@ -332,7 +332,8 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 
 **Boundaries (more important than the rule list)**:
 
-- **Only these two entry points are gated.** Installing from the plugin page goes through `plugin-manager` directly; doctor is not on that write path and cannot intercept it.
+- **Plugin-page installs are gated, command-line ones are not.** A plugin-page install calls `installBundle` on the `plugin-manager` service instance, and doctor wraps that very method, so **both the plugin page and the `plugin_manager` tool go through the gate**. This is measured, not assumed: wrapping `setBundleEnabled` on the real build showed the plugin-page toggle flow passing through the wrapper. CLI `dsh plugin add` and a hand-edited `package.json` followed by `pnpm install` never touch the service — that is the package manager write path and **cannot be covered**.
+- **Fail open on the passive path.** The plugin-page path refuses only on a GT hit; a fetch failure, network error or a bug in the wrapper **lets the install through with a warning** — one hiccup should not block every install, and the user may not know doctor caused it. The proactive entry points (`--gate` / `/install`) still fail closed. Set `installGate` to `off` to disable the gate entirely.
 - **The official approval chain is bypassed.** `/install` calls `ctx.pluginManager.installBundle` directly, skipping the `danger-full-access` / per-call approval enforced by the `plugin_manager` tool. It installs with host-process privileges and may run allowed build scripts. That is the cost of an automatic gate.
 - **The inspected and installed version are locked together.** `--gate` accepts a bare name, an exact version or a dist-tag; ranges such as `^1` or `1.x` are rejected. The resolved `name@exactVersion` is passed to `installBundle`. The tarball comes from the registry in `~/.npmrc`, while `installBundle` downloads again via pnpm, so **byte-identical content is not guaranteed**.
 - **Nothing is written during inspection.** The tarball is decompressed in memory with a hand-written tar reader; no temp directory, no cleanup, no code from the reviewed package executed.
@@ -577,7 +578,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 353 tests
+npm test          # 362 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```
