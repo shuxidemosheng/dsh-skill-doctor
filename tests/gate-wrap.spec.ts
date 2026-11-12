@@ -122,7 +122,10 @@ describe('registerInstallGate', () => {
     // ChangeResult 的 code 是固定枚举，只能借用 operation-error，原因写进 diagnostic。
     expect(error.code).toBe('operation-error')
     expect(error.diagnostic).toContain('GT001')
-    expect(error.diagnostic).toContain('installGate: off')
+    // 拦截提示必须给出两条出路：按包信任（推荐，有成本、可撤销），
+    // 以及临时关掉这个组件行。旧版提示让人去改已被废弃的 installGate 配置。
+    expect(error.diagnostic).toContain('/doctor trust demo')
+    expect(error.diagnostic).toContain('skill-doctor-gate')
   })
 
   it('passes through when the gate passes', async () => {

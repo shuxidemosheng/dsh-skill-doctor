@@ -2,7 +2,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   buildCommands,
   COMMAND_NAMES,
@@ -12,6 +12,7 @@ import {
   type CommandSpec,
 } from '../src/commands'
 import { resolveConfig } from '../src/config'
+import { loadTrust, trustPath } from '../src/trust'
 import type { BaselineDiff } from '../src/baseline'
 import type { Finding, ProvenanceView, RuleId, SkillLintResult } from '../src/types'
 import { createFakeCtx, fakeExec, loadFixture } from './helpers'
@@ -318,5 +319,84 @@ describe('/review command', () => {
       expect(text.length).toBeGreaterThan(10)
       expect(text.includes('/review') || text.includes('插件审查')).toBe(true)
     })
+  })
+})
+
+describe('/doctor trust', () => {
+  let home: string
+  let previous: string | undefined
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'dsh-trust-cmd-'))
+    previous = process.env.DSH_HOME
+    // trustPath() 走 dshHome()，它每次读环境变量，所以这里能直接改指向。
+    process.env.DSH_HOME = home
+  })
+
+  afterEach(async () => {
+    if (previous === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = previous
+    await rm(home, { recursive: true, force: true })
+  })
+
+  function doctor(env = createFakeCtx([])): CommandSpec['run'] {
+    const specs = buildCommands(env.ctx as never, resolveConfig(undefined))
+    return specs.find(spec => spec.name === 'doctor')!.run
+  }
+
+  it('tells you what to do next when the list is empty', async () => {
+    const text = await doctor()('trust')
+    expect(text).toContain('信任清单是空的')
+    expect(text).toContain('/doctor trust')
+  })
+
+  it('adds a package and explains what it does', async () => {
+    const text = await doctor()('trust cc-safety-net')
+    expect(text).toContain('已加入信任清单：cc-safety-net')
+    expect(text).toContain('/doctor untrust cc-safety-net')
+    // 真的落盘了，而不是只回一句话。
+    const file = await loadTrust(trustPath())
+    expect(file.trusted.map(entry => entry.pkg)).toEqual(['cc-safety-net'])
+  })
+
+  it('strips the version: trust is per package, not per release', async () => {
+    await doctor()('trust cc-safety-net@2.7.12')
+    const file = await loadTrust(trustPath())
+    expect(file.trusted.map(entry => entry.pkg)).toEqual(['cc-safety-net'])
+  })
+
+  it('lists what is trusted', async () => {
+    await doctor()('trust cc-safety-net')
+    const text = await doctor()('trust')
+    expect(text).toContain('信任清单 · 1 个')
+    expect(text).toContain('cc-safety-net')
+    expect(text).toContain(trustPath())
+  })
+
+  it('removes a package and says so', async () => {
+    await doctor()('trust cc-safety-net')
+    const text = await doctor()('untrust cc-safety-net')
+    expect(text).toContain('已从信任清单移除：cc-safety-net')
+    const file = await loadTrust(trustPath())
+    expect(file.trusted).toEqual([])
+  })
+
+  it('reports a package that was never trusted', async () => {
+    const text = await doctor()('untrust ghost-pkg')
+    expect(text).toContain('信任清单里没有 ghost-pkg')
+  })
+
+  it('only accepts a registry package name', async () => {
+    const text = await doctor()('trust https://example.com/x.tgz')
+    expect(text).toContain('只支持 registry 包名')
+    const file = await loadTrust(trustPath())
+    expect(file.trusted).toEqual([])
+  })
+
+  it('does not treat a normal directory argument as the subcommand', async () => {
+    // `trustfoo` 不是子命令（整词匹配），应走体检分支；这里只确认没有被当成加信任。
+    await doctor()('trustfoo')
+    const file = await loadTrust(trustPath())
+    expect(file.trusted).toEqual([])
   })
 })

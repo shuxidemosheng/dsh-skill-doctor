@@ -420,10 +420,30 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 
 **退出码**：`--gate` 通过 `0`、命中高危 `1`、没审成 `2`。取不到包、解析失败、网络错误一律 `decision: 'error'`，**fail closed，绝不当成通过**。
 
+**信任清单（按包放行）**
+
+GT 规则是启发式，一定存在误报，也一定存在「我就是要装」。这种情况不必关组件、也不必改配置，把这个包加进信任清单：
+
+```text
+/doctor trust <包名>        加入信任；之后命中高危也放行，报告里标注「按信任清单放行」
+/doctor trust               列出现状和文件路径
+/doctor untrust <包名>      撤销
+```
+
+清单存 `$DSH_HOME/skill-doctor/trusted.json`，与病历同目录但**不按 profile 分**——信任是「我信这个包」，换 profile 不该重记一遍。按**包名**记、不绑版本：信任针对的是包，不是某一次发布。每次安装时现读，加完立刻点「重试」就生效，不需要重启。
+
+三条刻意的设计：
+
+- **放行不等于没问题。** 命中项照样列在报告里，只把结论从「拒绝安装」换成「通过（命中高危，但在信任清单里，已按授权放行）」，并提示撤销命令。
+- **`--gate` 命令行不查清单。** 它是「只审不装」的检查工具，脚本靠退出码做门禁；被白名单放行就等于门禁失效。清单只影响 `/install` 与插件页。
+- **清单文件坏了按空处理。** 读不出来最多回到默认行为（该拦的照拦），而抛错会让安装直接失败——那比误拦更糟。
+
+插件页被拦时，弹窗里的说明就是这两条路：`/doctor trust <包名>` 后点「重试」，或者临时关掉 `skill-doctor-gate` 那一行。
+
 **边界（比规则清单更重要）**：
 
 - **覆盖插件页，但拦不住命令行。** 插件页的安装会经过 `plugin-manager` 服务实例上的 `installBundle`，doctor 包装了该方法，所以**插件页与模型调 `plugin_manager` 都会被拦住**。这一点是实测的：在真实 dsh 里包装 `setBundleEnabled` 后，插件页开关组合包确实经过包装（remote 按实例属性取方法）。但 CLI 的 `dsh plugin add`、手改 `package.json` 后的 `pnpm install` 不经过服务，属于包管理器的写入路径，**无法覆盖**。
-- **被动经过时放行优先。** 插件页那条路只对「命中 GT 规则」阻断；取不到包、网络失败或包装自身出错时**放行并记一条 warn**——一次网络抖动不该让你什么都装不上，而且你未必知道是 doctor 导致的。主动入口（`--gate` / `/install`）仍然 fail closed。误报或明知有风险仍要装时，在插件页把 `skill-doctor-gate` 那一行关掉即可放行，装完再打开——不必改配置、不必重启、也不必卸载整个插件。
+- **被动经过时放行优先。** 插件页那条路只对「命中 GT 规则」阻断；取不到包、网络失败或包装自身出错时**放行并记一条 warn**——一次网络抖动不该让你什么都装不上，而且你未必知道是 doctor 导致的。主动入口（`--gate` / `/install`）仍然 fail closed。误报或明知有风险仍要装时，优先用 `/doctor trust <包名>` 按包放行（见下）；要整体关掉门禁，在插件页把 `skill-doctor-gate` 那一行关掉，装完再打开——不必改配置、不必重启、也不必卸载整个插件。
 - **会绕过官方审批链。** `/install` 直接调 `ctx.pluginManager.installBundle`，不会经过 `plugin_manager` 工具的 `danger-full-access` / 单次批准（那层检查在 tool 层），等于以宿主进程权限安装并执行允许的构建脚本。这是自动门禁的代价，用之前要接受。
 - **审的和装的是同一个精确版本、同一个源。** `--gate` 只接受包名、精确版本或 dist-tag，拒绝 `^1`、`~1`、`1.x` 这类范围表达式；解析出确切版本后，`/install` 用 `name@exactVersion` 安装。源也做了对齐：插件页调 `installBundle` 时会显式传 `registry`，门禁**直接用它取包**（而不是自己再去读 `~/.npmrc`），`/install` 再把同一个源交回安装。
   仍有一层消不掉的差异：pnpm 在指定源不可达时会回退到本机配置的备用源，所以**字节不保证完全相同**。另外显式传入的 registry 若不是合法 http(s) 地址，门禁直接判 `error` 而**不回退**——静默回退会重新造出「审 A 装 B」。
@@ -688,7 +708,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 378 个用例
+npm test          # 399 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

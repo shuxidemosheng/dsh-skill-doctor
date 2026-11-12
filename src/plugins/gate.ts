@@ -16,8 +16,9 @@
  *    自然也不涉及删除操作（用户明确要求删除必须先确认）。
  * 2. **fail closed。** 取不到包、解析失败、网络出错，一律返回 `decision: 'error'`，
  *    **绝不当成通过**。门禁最危险的失败模式就是「查不了就放行」。
- * 3. **不覆盖插件页。** 插件页的安装走 `plugin-manager` 自己的链路，本模块管不着。
- *    只有 `--gate` 与 `/install` 这两个新入口才带门禁。
+ * 3. **插件页也能覆盖。** 插件页走 `plugin-manager` 的同一个服务实例，包装
+ *    `installBundle` 就能拦到它（独立组件行 `skill-doctor-gate`）。`dsh plugin add`
+ *    与手改 `package.json` 后的 `pnpm install` 是包管理器的写入路径，管不着。
  *
  * ## 与 RV 规则的关系
  *
@@ -40,6 +41,7 @@ import {
   type TextFile,
 } from './review.js'
 import { parsePatchIds } from './scan.js'
+import { loadTrust, trustedNames } from '../trust.js'
 
 /** 门禁规则的稳定 id。与 RV* 分开编号，避免「提示」和「拒绝」混成一件事。 */
 export type GateRuleId = 'GT001' | 'GT002' | 'GT003'
@@ -62,6 +64,14 @@ export interface GateFinding {
  */
 export interface GateOptions {
   readonly registry?: string
+  /**
+   * 用户信任的包名白名单。命中高危但在名单里的包会被放行，并在报告里标注。
+   *
+   * 由调用方决定是否传：安装路径（`/install`、插件页包装）读清单后传入；
+   * `--gate` 命令行**故意不传** —— 它是「只审不装」的检查工具，脚本靠退出码
+   * 做门禁，被白名单放行就等于门禁失效。
+   */
+  readonly trusted?: readonly string[]
 }
 
 export interface GateResult {
@@ -82,6 +92,13 @@ export interface GateResult {
   readonly notes: readonly string[]
   /** decision === 'error' 时的原因；只含错误类别，不含本机绝对路径。 */
   readonly problem?: string
+  /**
+   * 命中了高危规则，但该包在信任清单里，按用户授权放行（`decision` 为 `pass`）。
+   *
+   * 单独一个字段而不是只靠 `notes`：报告要显著提示「这是放行，不是没问题」，
+   * 调用方也需要能据此区分「审完干净」和「审出问题但被信任」。
+   */
+  readonly trustedOverride?: boolean
 }
 
 /** 单文件 2 MiB、整包 10 MiB、最多 500 个文件；与 review.ts 的口径一致。 */
@@ -465,6 +482,13 @@ function buildReview(
   }
 }
 
+/** 包名是否在白名单里（大小写不敏感；npm 包名本来就全小写）。 */
+function isTrustedPackage(names: readonly string[] | undefined, pkg: string): boolean {
+  if (names === undefined || names.length === 0) return false
+  const target = pkg.toLowerCase()
+  return names.some(name => name.toLowerCase() === target)
+}
+
 /**
  * 门禁主流程：校验 spec → 取元数据 → 下载 tarball → 内存解压 → 审 → 判定。
  * 任何一步失败都返回 `decision: 'error'`，调用方不得把它当通过。
@@ -522,6 +546,9 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
   const findings = evaluateGateRules({ manifest, patchText, files })
   const review = buildReview(parsed.name, files, manifest, patchText, oversized, notes)
 
+  // 命中高危但包在信任清单里：放行，但保留 findings 让报告如实写出命中了什么。
+  const trustedHit = findings.length > 0 && isTrustedPackage(options?.trusted, parsed.name)
+
   return {
     spec: rawSpec,
     name: parsed.name,
@@ -529,7 +556,8 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
     installSpec: resolved.installSpec,
     tarball: resolved.tarball,
     registry: resolved.registry,
-    decision: findings.length > 0 ? 'block' : 'pass',
+    decision: findings.length > 0 && !trustedHit ? 'block' : 'pass',
+    ...trustedHit ? { trustedOverride: true } : {},
     findings,
     review,
     notes,
@@ -546,7 +574,10 @@ export function gatePlainLines(result: GateResult): string[] {
     return lines
   }
   lines.push(`  版本：${result.version}`)
-  lines.push(`  结论：${result.decision === 'pass' ? '通过，可以安装' : '拒绝安装'}`)
+  lines.push(
+    `  结论：${result.decision === 'pass' ? '通过，可以安装' : '拒绝安装'}`
+    + (result.trustedOverride === true ? '（命中高危，但在信任清单里，已按授权放行）' : ''),
+  )
   lines.push(`  RV 提示：${result.review.hints.length} 条（仅供参考，不参与判定）`)
   if (result.findings.length === 0) {
     lines.push('  高危规则：未命中')
@@ -557,7 +588,11 @@ export function gatePlainLines(result: GateResult): string[] {
       lines.push(`      ${finding.detail}`)
     }
   }
-  lines.push('  说明：审的是 tarball 内容，安装时 pnpm 会再下载一次；插件页安装不受本门禁约束。')
+  if (result.trustedOverride === true) {
+    lines.push('  注意：放行是因为这个包在信任清单里，不代表审查没发现问题。')
+    lines.push(`  撤销信任：/doctor untrust ${result.name}`)
+  }
+  lines.push('  说明：审的是 tarball 内容，安装时 pnpm 会再下载一次；插件页安装只在 skill-doctor-gate 那一行开启时才受约束。')
   return lines
 }
 
@@ -566,6 +601,8 @@ export function gateMarkdownLines(result: GateResult): string[] {
   const lines: string[] = ['## 安装门禁', '']
   lines.push(`> 审的是 tarball 内容，不落盘、不执行被审包代码。命中高危规则即拒绝；取包失败也按拒绝处理。`, '')
   lines.push(`审查对象：\`${result.spec}\`；版本：\`${result.version}\`；结论：**${result.decision === 'pass' ? '通过' : result.decision === 'block' ? '拒绝安装' : '未能完成审查'}**。`)
+  if (result.trustedOverride === true) lines.push(`> ⚠ 命中高危，但该包在信任清单里，已按授权放行。撤销：\`/doctor untrust ${result.name}\``)
+
   if (result.registry.length > 0) lines.push(`取包来源：\`${result.registry}\`（插件页安装时用它传的源，其余入口按本机 npm 配置）。`)
   if (result.decision === 'error') lines.push('', `原因：${result.problem ?? '未知原因'}`, '', '按 fail closed 处理，不安装。')
   lines.push('', `RV 提示 ${result.review.hints.length} 条（仅供参考，不参与判定）：`)
@@ -593,6 +630,7 @@ export function gateJson(result: GateResult): Record<string, unknown> {
     tarball: result.tarball,
     registry: result.registry,
     decision: result.decision,
+    ...result.trustedOverride === true ? { trustedOverride: true } : {},
     disclaimer: 'static gate, not a malware verdict',
     findings: result.findings.map(finding => ({ ...finding })),
     rvHints: result.review.hints.map(hint => ({ ...hint })),
@@ -611,13 +649,20 @@ export function gateJson(result: GateResult): Record<string, unknown> {
  * 注意：直接调服务不会经过 `plugin_manager` 工具的 `danger-full-access` / 单次审批
  * （那层检查在 tool 层），等于以宿主进程权限安装。这是自动门禁的代价。
  */
+/** 读信任清单，转成 `gateSpec` 能用的形状；读不到就当没有白名单（门禁照常拦）。 */
+async function trustOptions(): Promise<GateOptions> {
+  const file = await loadTrust()
+  const names = trustedNames(file)
+  return names.length === 0 ? {} : { trusted: names }
+}
+
 export async function installAfterGate(
   ctx: Context,
   rawSpec: string,
   /** 测试可传入已算好的门禁结果，跳过网络；生产调用方不传。 */
   precomputed?: GateResult,
 ): Promise<string[]> {
-  const gate = precomputed ?? await gateSpec(rawSpec)
+  const gate = precomputed ?? await gateSpec(rawSpec, await trustOptions())
   const lines = gatePlainLines(gate)
   if (gate.decision !== 'pass') return lines
 
@@ -736,12 +781,20 @@ export function registerInstallGate(
     const declared = (options as { registry?: unknown } | undefined)?.registry
     const registryOverride =
       typeof declared === 'string' && declared.length > 0 ? declared : undefined
+    // 信任清单每次安装现读：被拦住→加信任→立刻重试就该生效，不需要重启。
+    // 读失败按空清单处理（loadTrust 自身不抛，这里只是不让它挡住安装）。
+    const trustFile = await loadTrust().catch(() => undefined)
+    const trusted = trustFile === undefined ? [] : trustedNames(trustFile)
+    const gateOptions: GateOptions | undefined =
+      registryOverride === undefined && trusted.length === 0
+        ? undefined
+        : {
+            ...registryOverride === undefined ? {} : { registry: registryOverride },
+            ...trusted.length === 0 ? {} : { trusted },
+          }
     let gate: GateResult
     try {
-      gate = await runGate(
-        String(spec),
-        registryOverride === undefined ? undefined : { registry: registryOverride },
-      )
+      gate = await runGate(String(spec), gateOptions)
     } catch (error) {
       probe.logger.warn(
         `skill-doctor: install gate skipped (${reasonOf(error)}); installing without inspection`,
@@ -760,7 +813,7 @@ export function registerInstallGate(
         target: String(spec),
         error: {
           code: 'operation-error',
-          diagnostic: `安装门禁拒绝：${ids}。${detail} 若确认是误报，可在 profile 的 cordis.patch.yml 里给 skill-doctor 那一行加 config.installGate: off 后重启。`,
+          diagnostic: `安装门禁拒绝：${ids}。${detail} 若这个包可信，执行 /doctor trust ${gate.name.length > 0 ? gate.name : String(spec)} 后点「重试」即可放行；要临时关掉门禁，在插件页关掉 skill-doctor-gate 那一行。`,
         },
       }
     }

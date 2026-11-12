@@ -332,10 +332,30 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 
 **Exit codes**: `--gate` returns `0` on pass, `1` on a high-risk hit, `2` when the inspection could not finish. Any fetch, parse or network failure yields `decision: 'error'` — **fail closed, never treated as a pass**.
 
+**Trust list (per-package override)**
+
+The GT rules are heuristics: expect false positives, and expect the case where you simply want the package. Neither needs a config edit or switching the row off — add the package to the trust list:
+
+```text
+/doctor trust <pkg>        trust it; high-risk hits are then released, and the report says so
+/doctor trust              list what is trusted and where the file lives
+/doctor untrust <pkg>      revoke
+```
+
+The list lives at `$DSH_HOME/skill-doctor/trusted.json`, next to the checkup records but **not per profile** — trust is "I trust this package", and switching profiles should not mean re-recording it. It is keyed by **package name, not version**: trust applies to the package, not to one release. The file is read on every install, so adding an entry takes effect on the next retry with no restart.
+
+Three deliberate choices:
+
+- **Released is not the same as clean.** The findings still appear in the report; only the verdict changes, from "refuse" to "pass (high-risk hit, but trusted — released under your authorisation)", together with the revoke command.
+- **`--gate` does not consult the list.** It is the inspect-only tool that scripts gate on; being whitelisted there would defeat the gate. The list affects `/install` and the plugin page only.
+- **A corrupt file reads as empty.** Worst case the gate falls back to its default behaviour (still refusing what it should); throwing would make the install itself fail, which is worse than a false refusal.
+
+When the plugin page refuses an install, the dialog names both ways out: `/doctor trust <pkg>` then retry, or switch the `skill-doctor-gate` row off temporarily.
+
 **Boundaries (more important than the rule list)**:
 
 - **Plugin-page installs are gated, command-line ones are not.** A plugin-page install calls `installBundle` on the `plugin-manager` service instance, and doctor wraps that very method, so **both the plugin page and the `plugin_manager` tool go through the gate**. This is measured, not assumed: wrapping `setBundleEnabled` on the real build showed the plugin-page toggle flow passing through the wrapper. CLI `dsh plugin add` and a hand-edited `package.json` followed by `pnpm install` never touch the service — that is the package manager write path and **cannot be covered**.
-- **Fail open on the passive path.** The plugin-page path refuses only on a GT hit; a fetch failure, network error or a bug in the wrapper **lets the install through with a warning** — one hiccup should not block every install, and the user may not know doctor caused it. The proactive entry points (`--gate` / `/install`) still fail closed. For a false positive, or when you knowingly accept the risk, switch the `skill-doctor-gate` row off in the plugin page and install, then switch it back on — no config edit, no restart, no need to uninstall the whole plugin.
+- **Fail open on the passive path.** The plugin-page path refuses only on a GT hit; a fetch failure, network error or a bug in the wrapper **lets the install through with a warning** — one hiccup should not block every install, and the user may not know doctor caused it. The proactive entry points (`--gate` / `/install`) still fail closed. For a false positive, or when you knowingly accept the risk, prefer `/doctor trust <pkg>` to release that one package (see below). To disable the gate entirely, switch the `skill-doctor-gate` row off in the plugin page, install, then switch it back on — no config edit, no restart, no need to uninstall the whole plugin.
 - **The official approval chain is bypassed.** `/install` calls `ctx.pluginManager.installBundle` directly, skipping the `danger-full-access` / per-call approval enforced by the `plugin_manager` tool. It installs with host-process privileges and may run allowed build scripts. That is the cost of an automatic gate.
 - **The inspected and installed package share the exact version and the same registry.** `--gate` accepts a bare name, an exact version or a dist-tag; ranges such as `^1` or `1.x` are rejected. The resolved `name@exactVersion` is passed to `installBundle`. The registry is aligned too: the plugin page passes an explicit `registry` to `installBundle`, and the gate **fetches from that same source** instead of re-reading `~/.npmrc`; `/install` hands the same source back to the installer.
   One difference cannot be removed: when the requested registry is unreachable, pnpm falls back to the configured one, so **byte-identical content is still not guaranteed**. An explicitly passed registry that is not a valid http(s) URL makes the gate return `error` and it does **not** fall back — a silent fallback would recreate the inspect-A-install-B gap.
@@ -583,7 +603,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 378 tests
+npm test          # 399 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

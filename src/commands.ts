@@ -30,7 +30,8 @@ import { profileNameOf } from './profile-name.js'
 import { collectRuntimeSkills, collectRuntimeSkillsWithWinners, collectWinners } from './runtime.js'
 import { scanRoots } from './scanner/fs-scan.js'
 import { profileDirOf, scanProfile } from './plugins/scan.js'
-import { installAfterGate } from './plugins/gate.js'
+import { installAfterGate, parseRegistrySpec } from './plugins/gate.js'
+import { addTrust, isTrusted, loadTrust, removeTrust, trustPath } from './trust.js'
 import {
   getLastReview, reviewBundle, reviewPlainLines, setLastReview,
 } from './plugins/review.js'
@@ -189,7 +190,7 @@ export function plainFollowUp(diff: BaselineDiff, label: string): string {
 
 /** 命令名 → 输入提示；`<...>` 部分由用户补齐。 */
 const COMMAND_META = {
-  doctor: { description: '体检所有技能', hint: '[目录，留空=全部]' },
+  doctor: { description: '体检所有技能', hint: '[目录 | trust <包名>]' },
   scope: { description: '只体检一个目录', hint: '<目录或 SKILL.md 路径>' },
   rewrite: { description: '简介改写工单', hint: '<技能名>' },
   followup: { description: '和上次体检对比', hint: '[目录，留空=全部]' },
@@ -205,6 +206,72 @@ const COMMAND_META = {
  * 每次执行都重新采集技能（不缓存）：技能文件随时会被编辑，
  * 命令输出的价值就在于"此刻"的状态。
  */
+/**
+ * `/doctor trust` 的实现：列出、添加、撤销信任清单。
+ *
+ * 为什么挂在 `/doctor` 下而不是新开 `/trust`：面板按钮由 `MODES` 派生，
+ * 命令每多一条就多一个按钮，第八个已经被 `/install` 占了。挂子命令既不加
+ * 按钮，也不动 `COMMAND_NAMES`。
+ *
+ * 代价是与「体检某个目录」共用入口，所以只认 `trust` / `untrust` 开头的
+ * 整词，并在歧义时给出 `/scope` 兜底提示。
+ * @param remove - true 表示 untrust。
+ * @param arg - 子命令后面的参数（包名）。
+ */
+async function trustCommand(remove: boolean, arg: string): Promise<string> {
+  const path = trustPath()
+  const file = await loadTrust(path)
+
+  // 无参数：列出现状。空清单也要给出下一步怎么做，不能只回一句「空」。
+  if (arg.length === 0) {
+    if (file.trusted.length === 0) {
+      return [
+        '信任清单是空的。',
+        '加一个：/doctor trust <包名>',
+        '清单里的包命中 GT 高危规则时会被放行，报告里会标注「按信任清单放行」。',
+      ].join('\n')
+    }
+    const lines = [`信任清单 · ${file.trusted.length} 个`, `  文件：${path}`]
+    for (const entry of [...file.trusted].sort((a, b) => a.pkg.localeCompare(b.pkg))) {
+      const when = entry.at.slice(0, 10)
+      lines.push(`  ${entry.pkg.padEnd(28)}${when}${entry.reason === undefined ? '' : `  ${entry.reason}`}`)
+    }
+    lines.push('提示：信任只让门禁放行，RV 提示照旧。撤销用 /doctor untrust <包名>。')
+    return lines.join('\n')
+  }
+
+  // 按包名记，不绑版本：用户输入 `pkg@1.2.3` 时剥掉版本。
+  const parsed = parseRegistrySpec(arg)
+  if (parsed === undefined) {
+    return `只支持 registry 包名（可带版本），例如 cc-safety-net 或 cc-safety-net@2.7.12。收到：${arg}`
+  }
+  const pkg = parsed.name
+
+  if (remove) {
+    const result = await removeTrust(pkg, path)
+    if (!result.removed) return `信任清单里没有 ${pkg}。`
+    const rest = result.file.trusted.length
+    return [
+      `已从信任清单移除：${pkg}`,
+      rest === 0 ? '清单现在是空的。' : `还剩 ${rest} 个。`,
+      '之后门禁遇到它会照常拒绝。',
+    ].join('\n')
+  }
+
+  if (isTrusted(file, pkg)) {
+    const at = file.trusted.find(entry => entry.pkg.toLowerCase() === pkg.toLowerCase())?.at.slice(0, 10) ?? ''
+    return `${pkg} 已在信任清单里（${at} 起）。撤销：/doctor untrust ${pkg}`
+  }
+
+  await addTrust(pkg, undefined, path)
+  return [
+    `已加入信任清单：${pkg}`,
+    `  文件：${path}`,
+    '  之后门禁命中高危会放行，并在报告里标注「按信任清单放行」。',
+    `  撤销：/doctor untrust ${pkg}`,
+  ].join('\n')
+}
+
 export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec[] {
   const limit = config.maxDescriptionLength
 
@@ -240,6 +307,15 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
       name: 'doctor',
       ...COMMAND_META.doctor,
       run: async input => {
+        // 子命令先认，再当目录处理。整词匹配 + 必须跟着空白或结尾，
+        // 避免把 `trustfoo` 这种目录名吃掉。
+        const sub = /^(un)?trust(?:\s+(.*))?$/i.exec(input.trim())
+        if (sub !== null) return trustCommand(sub[1] !== undefined, (sub[2] ?? '').trim())
+        if (/^trust\b/i.test(input.trim())) {
+          // 走到这里说明匹配失败但看起来像想用子命令，给一条明确提示，
+          // 同时告诉真有同名目录时该用哪条命令。
+          return '用法：/doctor trust [包名] 或 /doctor untrust <包名>\n要体检名为 trust 的目录，请用 /scope trust'
+        }
         const { results, scopedTo, provenance } = await collect(input)
         return plainCheckup(results, limit, scopedTo, undefined, provenance)
       },
