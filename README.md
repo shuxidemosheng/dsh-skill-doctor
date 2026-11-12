@@ -41,7 +41,7 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@0.18.1`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.0.0`。
 
 0.14.0 起插件页会显示**三个组件行**（体检 / 安装门禁 / 外部技能挂载），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
@@ -635,6 +635,29 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 - **远端/虚拟技能没有文件级检查。** 没有本地路径，编码和引用规则自动跳过。
 - **外部技能挂载不监听文件变化。** 第二行不带 watcher，改了 `SKILL.md` 要重启 dsh；它也不做字段之外的语义转换，外来技能不合 dsh 命名规则时只能 slug 化或跳过。
 - **不判断外来技能合不合原 agent 的规矩。** 体检用的是 dsh 的规则（SD001–SD015），对 Claude / Codex 的技能只能给出"在 dsh 里会怎样"，不代表它在原工具里有问题。
+
+## 兼容性承诺（1.0.0）
+
+1.0.0 承诺稳定的是**这些**：
+
+- 四个工具名与参数 schema：`skill_doctor` / `skill_lint` / `skill_explain` / `plugin_doctor`
+- 八条斜杠命令的名字与用法，含 `/doctor trust` 子命令
+- 配置键名与取值范围
+- `cordis.patch.yml` 里三行组件的 `id`
+- CLI 的 `--json` 字段与退出码语义（`0` 通过 / `1` 命中 / `2` 未审成）
+
+**不承诺**与任意 dsh 版本兼容。下面四条契约由 dsh 定义，不在本仓库控制范围内：
+
+| 契约 | 由谁定义 | 变了会怎样 |
+|---|---|---|
+| `pluginManager` 服务名 | dsh 的 plugin-manager | 拿不到服务，门禁静默降级 |
+| `installBundle(spec, options)` 签名 | 同上 | 包装失效或行为异常 |
+| `cordis.patch.yml` 的行结构 | dsh loader | 组件行加载失败 |
+| 子路径 `exports` 的加载方式 | dsh loader | `./gate`、`./compat` 入口不可用 |
+
+这四条变化时会跟随调整，**必要时发 2.0.0**。
+
+`engines.dsh` 目前是开放下界 `>=0.2.0-rc.2`：dsh 仍在 rc 阶段，锁上界会让新版本装不上，所以没有锁。发现某个 dsh 版本不兼容时，先确认 `pluginManager` 服务名是否还在、`cordis.patch.yml` 是否还是三行结构，这两处是最常见的失效点。
 
 ## 故障排查
 

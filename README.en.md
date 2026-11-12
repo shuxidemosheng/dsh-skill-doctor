@@ -41,7 +41,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@0.18.1`.
+That installs the latest version; pin it by appending a version, e.g. `@1.0.0`.
 
 From 0.14.0 the plugin page shows **three component rows** (checkup / install gate / external skill sources), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
@@ -532,6 +532,29 @@ Capability boundaries, not omissions:
 - **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
 - **The external-source row does not watch files.** It has no watcher, so editing `SKILL.md` needs a dsh restart; it also performs no semantic conversion beyond field mapping, so names that break dsh rules are either slugified or skipped.
 - **Foreign skills are not judged by the rules of their original agent.** Checkups use dsh rules (SD001-SD015); a Claude / Codex skill is only reported as "how it behaves in dsh", not as broken in its original tool.
+
+## Compatibility promise (1.0.0)
+
+1.0.0 promises these are stable:
+
+- The four tool names and their parameter schemas: `skill_doctor` / `skill_lint` / `skill_explain` / `plugin_doctor`
+- The eight slash commands, including the `/doctor trust` subcommand
+- Config key names and accepted values
+- The `id` of all three component rows in `cordis.patch.yml`
+- CLI `--json` fields and exit codes (`0` pass / `1` hit / `2` could not finish)
+
+**Not promised**: compatibility with every dsh version. Four contracts below are defined by dsh and are outside this repository's control:
+
+| Contract | Defined by | If it changes |
+|---|---|---|
+| The `pluginManager` service name | dsh plugin-manager | the service is missing and the gate silently degrades |
+| `installBundle(spec, options)` signature | same | the wrapper stops working or misbehaves |
+| The row structure of `cordis.patch.yml` | dsh loader | component rows fail to load |
+| Subpath `exports` resolution | dsh loader | the `./gate` and `./compat` entries become unavailable |
+
+These are followed when they change, **with a 2.0.0 release if needed**.
+
+`engines.dsh` is an open lower bound, `>=0.2.0-rc.2`: dsh is still in rc, and capping the upper bound would block newer builds. When a dsh version turns out incompatible, check first whether the `pluginManager` service name still exists and whether `cordis.patch.yml` is still the three-row shape — those are the usual failure points.
 
 ## Troubleshooting
 
