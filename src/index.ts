@@ -22,7 +22,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { registerCommands } from './commands.js'
 import { registerInstallWatch } from './plugins/review.js'
-import { registerInstallGate } from './plugins/gate.js'
 import { resolveConfig } from './config.js'
 import type { Config } from './config.js'
 import { buildDoctorTool } from './tools/doctor.js'
@@ -88,13 +87,13 @@ export function apply(ctx: Context, config: Config | undefined): void {
     )
   }
 
-  // 插件页安装门禁：包装 plugin-manager 服务上的 installBundle（插件页走同一个实例）。
-  // 同样放在 try 里——门禁装不上也绝不能让体检功能跟着挂掉。
-  try {
-    registerInstallGate(ctx, resolved.installGate)
-  } catch (error) {
+  // 插件页安装门禁已拆成独立组件行（id: skill-doctor-gate，入口 gate-entry.ts）。
+  // 这样遇到「明知有风险仍要装」的插件时，在插件页关掉那一行即可安装。
+  // 老配置里的 installGate 键仍然接受，但已不再生效，这里给一次迁移提示。
+  if (resolved.installGate !== undefined) {
     ctx.logger.warn(
-      `skill-doctor: install gate unavailable: ${error instanceof Error ? error.message : String(error)}`,
+      `skill-doctor: config.installGate is deprecated and no longer takes effect (got "${resolved.installGate}"); `
+      + 'turn the "skill-doctor-gate" component off in the plugin page instead',
     )
   }
 }

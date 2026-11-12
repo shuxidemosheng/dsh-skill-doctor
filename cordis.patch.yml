@@ -1,9 +1,10 @@
 # dsh-skill-doctor —— 技能体检
 #
-# 本组合包含两个组件行，插件页可以分别开关：
+# 本组合包含三个组件行，插件页可以分别开关：
 #   1) skill-doctor         —— 四个体检工具 + 斜杠命令（只读诊断）
 #   2) skill-doctor-compat  —— 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh
-# 两行各有自己的 config；关掉第二行不影响第一行。
+#   3) skill-doctor-gate    —— 插件页安装门禁（包装 installBundle）
+# 三行各有自己的生命周期；关掉一行不影响另外两行。
 #
 # 第一行的 extraRoots 是「体检时临时扫一遍外部目录」（一次性，只影响报告），
 # 与第二行的运行时挂载是两件事，别混用：
@@ -21,10 +22,8 @@
       config:
         maxDescriptionLength: 500
         maxBodyTokens: 8000
-        # 插件页安装门禁：block（默认，命中 GT 高危规则就拒绝）| off（完全关闭）。
-        # 只覆盖经由 plugin-manager 服务的安装；CLI dsh plugin add 与手改
-        # package.json 后的 pnpm install 不经过它。误报时改成 off 再重启即可。
-        # installGate: block
+        # installGate 已废弃：门禁现在是独立的组件行 skill-doctor-gate（见文件末尾），
+        # 改用插件页上的开关控制。这里的键仍被接受但不再生效，只会打一条迁移提示。
 
     - id: skill-doctor-compat
       name: dsh-skill-doctor/compat
@@ -36,3 +35,10 @@
         # providerName: skill-doctor-compat   默认，避免与 dsh-skill-compat-plus 撞名
         # slugifyNames: true                 外来名不合 dsh kebab 规则时自动转换
         # synthesizeDescription: true       Claude 允许缺省 description，从正文首段合成
+
+    # 插件页安装门禁（第三行）。遇到「明知有风险但仍要装」的插件时，在插件页
+    # 把这一行关掉再装，装完再打开即可——不用改配置文件、不用重启、也不必卸载
+    # 整个插件。关掉它只影响插件页与模型工具发起的安装；`--gate` 命令行与
+    # `/install` 命令属于主组件与 CLI，不随这一行启停，仍会审。
+    - id: skill-doctor-gate
+      name: dsh-skill-doctor/gate

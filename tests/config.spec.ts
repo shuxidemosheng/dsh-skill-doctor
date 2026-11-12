@@ -19,6 +19,19 @@ describe('resolveConfig', () => {
     expect(() => resolveConfig({ severityThreshold: 'fatal' } as never)).toThrow(/info, warn, error/)
   })
 
+  it('treats installGate as deprecated: only reported when set explicitly', () => {
+    // 门禁已拆成独立组件行。配置里的 installGate 只为兼容保留，
+    // 不再有默认值——「没设置」和「设成 block」必须能区分开，
+    // 主入口据此才决定要不要打迁移提示。
+    expect(resolveConfig(undefined).installGate).toBeUndefined()
+    expect(resolveConfig({ installGate: 'off' }).installGate).toBe('off')
+    expect(resolveConfig({ installGate: 'block' }).installGate).toBe('block')
+  })
+
+  it('still rejects an invalid installGate value', () => {
+    expect(() => resolveConfig({ installGate: 'nope' } as never)).toThrow(/installGate/)
+  })
+
   it('validates rule ids and values', () => {
     expect(() => resolveConfig({ rules: { SD999: 'off' } } as never)).toThrow(/unknown rule id/)
     expect(() => resolveConfig({ rules: { SD001: 'fatal' } } as never)).toThrow(/info, warn, error/)

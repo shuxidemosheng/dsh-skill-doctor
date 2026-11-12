@@ -26,9 +26,9 @@ export interface Config {
    */
   baseline?: string
   /**
-   * 插件页安装门禁：`block`（默认）在命中 GT 高危规则时拒绝安装；
-   * `off` 完全关闭。注意它只覆盖经由 plugin-manager 服务的安装，
-   * CLI 的 dsh plugin add 与手改 package.json 后的 pnpm install 不经过它。
+   * 已废弃：插件页安装门禁现在是一个独立的组件行（`id: skill-doctor-gate`），
+   * 由插件页的开关控制。这里仍然接受该键以避免旧配置报「未知键」，但**不再生效**；
+   * 主入口会打一条 warn 提示改用组件开关。
    */
   installGate?: 'block' | 'off'
 }
@@ -45,8 +45,8 @@ export interface ResolvedConfig {
   readonly excludeProviders: readonly string[]
   /** `auto`（默认）/ 文件路径 / `off`。 */
   readonly baseline: string
-  /** 插件页安装门禁：block（默认）或 off。 */
-  readonly installGate: 'block' | 'off'
+  /** 已废弃（见 {@link Config.installGate}）：仅在用户显式设置时有值。 */
+  readonly installGate?: 'block' | 'off'
 }
 
 const SEVERITIES: readonly Severity[] = ['info', 'warn', 'error']
@@ -126,8 +126,9 @@ export function resolveConfig(input: Config | undefined): ResolvedConfig {
     baseline = raw.baseline.trim()
   }
 
-  // 默认 block：门禁的价值在于默认生效；误报时用 off 关掉即可，不必卸载插件。
-  let installGate: 'block' | 'off' = 'block'
+  // 已废弃：门禁改由独立组件行控制。这里只保留「用户显式设置过」这个事实，
+  // 供主入口打一条迁移提示；不再影响任何行为。
+  let installGate: 'block' | 'off' | undefined
   if (raw.installGate !== undefined) {
     if (raw.installGate !== 'block' && raw.installGate !== 'off') {
       throw new Error('installGate must be "block" or "off"')

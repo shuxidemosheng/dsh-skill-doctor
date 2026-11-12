@@ -31,7 +31,7 @@
 - **知道哪些技能模型从来不用。** 面板的「使用统计」按加载次数排行，跨会话累计——静态检查给不出的动态证据。
 - **按根因看，不按个数看。** 13 个技能都“简介超长”，如果它们都叫 `nature-*`，那多半是一套模板的问题——报告会把它聚成一条，告诉你改一次顶 13 次。
 - **尺子会过期，报告会说明。** “超过 500 字算长”是 dsh 当时的约定，不是常数。报告会把自己按哪个 dsh 版本校准过写出来；版本对不上时，明确提示阈值可能已过期。
-- **一个插件，两行组件，可分别开关。** 第二行把 Claude Code / Codex / ZCode 的技能目录挂进 dsh，插件页上独立开关；关掉它不影响体检。诊断仍是主线，挂载是可选的附加能力。
+- **一个插件，三行组件，可分别开关。** 第二行把 Claude Code / Codex / ZCode 的技能目录挂进 dsh；第三行是安装门禁，遇到「明知有风险仍要装」的插件时在插件页把它关掉即可安装。诊断仍是主线，另外两行都是可选的。
 - **CI 里能跑。** `dsh-skill-lint` 不依赖 dsh 运行时，退出码和 `--json` 都准备好了。
 
 ## 安装
@@ -42,7 +42,7 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor
 
 装的是最新版；想锁定版本就在名字后面加版本号，例如 `@0.17.0`。
 
-0.14.0 起插件页会显示**两个组件行**（体检 / 外部技能挂载），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
+0.14.0 起插件页会显示**三个组件行**（体检 / 安装门禁 / 外部技能挂载），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
 装完**完全退出并重开** dsh（面板等客户端代码只在启动时加载）。
 
@@ -403,7 +403,9 @@ npx --package dsh-skill-doctor dsh-skill-lint . --fix --only SD013            # 
 
 ### 安装门禁（审过才装）
 
-这一版新增了**可选的**安装门禁：先把 registry 上的 tarball 取回来在内存里审一遍，命中高危规则就拒绝，通过后才调用 dsh 官方的 `installBundle`。两个入口共用同一套判定：
+这一版新增了**可选的**安装门禁：先把 registry 上的 tarball 取回来在内存里审一遍，命中高危规则就拒绝，通过后才调用 dsh 官方的 `installBundle`。三个入口共用同一套判定：
+
+**启停方式**：门禁是一个独立组件行（`skill-doctor-gate`），在插件页关掉它，插件页与模型工具发起的安装就不再受约束；`--gate` 命令行与 `/install` 命令属于主组件，仍会审。关掉即生效——行开关卸载该 fiber，`ctx.effect` 里注册的还原函数把 `installBundle` 换回原方法，不需要重启（按 compat 行的同一机制推断，本行尚未在真实 dsh 里逐步验证）。老配置里的 `installGate` 键仍被接受，但已不再生效，读到会打一条迁移提示。
 
 ```bash
 # Git Bash：只审不装，供脚本接退出码
@@ -421,7 +423,7 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 **边界（比规则清单更重要）**：
 
 - **覆盖插件页，但拦不住命令行。** 插件页的安装会经过 `plugin-manager` 服务实例上的 `installBundle`，doctor 包装了该方法，所以**插件页与模型调 `plugin_manager` 都会被拦住**。这一点是实测的：在真实 dsh 里包装 `setBundleEnabled` 后，插件页开关组合包确实经过包装（remote 按实例属性取方法）。但 CLI 的 `dsh plugin add`、手改 `package.json` 后的 `pnpm install` 不经过服务，属于包管理器的写入路径，**无法覆盖**。
-- **被动经过时放行优先。** 插件页那条路只对「命中 GT 规则」阻断；取不到包、网络失败或包装自身出错时**放行并记一条 warn**——一次网络抖动不该让你什么都装不上，而且你未必知道是 doctor 导致的。主动入口（`--gate` / `/install`）仍然 fail closed。误报时把 `installGate` 设为 `off` 即可关闭门禁，不必卸载插件。
+- **被动经过时放行优先。** 插件页那条路只对「命中 GT 规则」阻断；取不到包、网络失败或包装自身出错时**放行并记一条 warn**——一次网络抖动不该让你什么都装不上，而且你未必知道是 doctor 导致的。主动入口（`--gate` / `/install`）仍然 fail closed。误报或明知有风险仍要装时，在插件页把 `skill-doctor-gate` 那一行关掉即可放行，装完再打开——不必改配置、不必重启、也不必卸载整个插件。
 - **会绕过官方审批链。** `/install` 直接调 `ctx.pluginManager.installBundle`，不会经过 `plugin_manager` 工具的 `danger-full-access` / 单次批准（那层检查在 tool 层），等于以宿主进程权限安装并执行允许的构建脚本。这是自动门禁的代价，用之前要接受。
 - **审的和装的是同一个精确版本、同一个源。** `--gate` 只接受包名、精确版本或 dist-tag，拒绝 `^1`、`~1`、`1.x` 这类范围表达式；解析出确切版本后，`/install` 用 `name@exactVersion` 安装。源也做了对齐：插件页调 `installBundle` 时会显式传 `registry`，门禁**直接用它取包**（而不是自己再去读 `~/.npmrc`），`/install` 再把同一个源交回安装。
   仍有一层消不掉的差异：pnpm 在指定源不可达时会回退到本机配置的备用源，所以**字节不保证完全相同**。另外显式传入的 registry 若不是合法 http(s) 地址，门禁直接判 `error` 而**不回退**——静默回退会重新造出「审 A 装 B」。
@@ -483,14 +485,15 @@ GitHub Actions：
 
 ## 外部技能挂载（可选第二组件）
 
-0.14.0 起这个包在插件页显示**两行组件**，每行有自己的 `config` 和开关：
+0.14.0 起这个包在插件页显示组件行，每行有自己的开关（前两行还有各自的 `config`）。当前是**三行**：
 
 | 组件行 | 模块 | 做什么 |
 |---|---|---|
 | `skill-doctor` | `dsh-skill-doctor` | 四个体检工具、斜杠命令、面板（只读诊断） |
+| `skill-doctor-gate` | `dsh-skill-doctor/gate` | 包装 `installBundle`，插件页安装前审 tarball；关掉即放行 |
 | `skill-doctor-compat` | `dsh-skill-doctor/compat` | 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh 的技能视图 |
 
-关掉第二行只卸载 provider，体检照常跑。底层原因：dsh 的一行组件就是 `cordis.patch.yml` 里 `- insert:` 下的一个子项，行开关作用于整行的 fiber（卸载/挂载）。两类能力写进同一个 `apply()` 就只能一起开、一起关，所以拆成了两个模块入口，通过 `package.json` 的 `exports["./compat"]` 暴露。
+关掉任一行只卸载那一行：关掉挂载行只是撤掉 provider，关掉门禁行只是解除包装，体检照常跑。底层原因：dsh 的一行组件就是 `cordis.patch.yml` 里 `- insert:` 下的一个子项，行开关作用于整行的 fiber（卸载/挂载）。多种能力写进同一个 `apply()` 就只能一起开、一起关，所以拆成多个模块入口，通过 `package.json` 的 `exports` 子路径（`./compat`、`./gate`）暴露。
 
 **默认行为**：patch 里三家来源都写成 `true`，装上即挂载；目录不存在时静默跳过。dsh 原生技能同名时永远优先（rank 100/400 < 导入的 210–470），项目级导入压过用户级导入。
 
@@ -530,7 +533,7 @@ GitHub Actions：
 
 > 补充（2026-11-08）：社区里 `dsh-plugin-skill-autoroute` 监听 dsh 原生的 `skills/change` 事件来失效自己的技能目录缓存，说明存在比常驻 `chokidar` watcher 更轻的路径。**未验证**：该事件能否让第三方 provider 触发 registry 重新 collect（那个插件只失效自己的缓存）。验证之前，本插件仍不做热更新，上面的结论不变。
 
-> `name: dsh-skill-doctor/compat` 这种第三方包子路径已在真实 dsh 桌面端验证：插件页显示「共 2 个组件 · 2 运行中」，两行都成功加载（验证的是 loader 与 fiber，不代表 `/doctor` 报告里导入技能的字段取值已在真实会话逐项核对）。若你的环境里第二行显示异常，先看 devtools 里的加载报错。
+> `name: dsh-skill-doctor/compat` 这种第三方包子路径已在真实 dsh 桌面端验证：插件页显示「共 2 个组件 · 2 运行中」，两行都成功加载（那次实测时是两行；后续版本增加了第三行 `skill-doctor-gate`，加载方式相同）（验证的是 loader 与 fiber，不代表 `/doctor` 报告里导入技能的字段取值已在真实会话逐项核对）。若你的环境里第二行显示异常，先看 devtools 里的加载报错。
 
 ### 来源与遮蔽（报告里的新指标）
 
@@ -649,6 +652,7 @@ dsh plugin --profile <你的profile> list
 5. 范围参数分两种：`roots` **限定**只查这些目录（用户点名目录时用），`extraRoots` 在会话技能之外**追加**（查同名遮蔽时用）
 6. 文件级检查一律只读；写入只有四条显式路径（`baseline` 的病历 JSON、`setDescription` 写用户确认过的那一行、`fix` 修 BOM/CRLF、`/install` 在门禁通过后调用官方 `installBundle`）；前三条带 `.bak` 与复验回滚，最后一条由官方负责失败恢复
 7. 第二组件行是独立模块（`src/compat-entry.ts`），`apply()` 里只做 `ctx.skills.registerProvider()`；它只读地发现外来技能，不参与上面任何一条写入路径
+8. 第三组件行是独立模块（`src/gate-entry.ts`），`apply()` 里只调 `registerInstallGate(ctx, 'block')`；它只在安装链路前加一道判定，不写 profile、不回滚、不改包内容
 
 它**不执行**技能里的脚本，**不自动改写**文案或语义，**不发送**技能内容到网络。
 
@@ -674,7 +678,7 @@ dsh plugin --profile <你的profile> list
 - ✅ 技能 × 插件会诊（`PL006`）
 - ✅ 改写工单 + 确认后写入（`setDescription`）
 - ✅ 目录范围参数、斜杠命令与中文菜单
-- ✅ 双组件行：体检 + 可选外部技能挂载（`./compat` 子路径导出，零新增依赖）
+- ✅ 三组件行：体检 + 安装门禁 + 可选外部技能挂载（`./gate`、`./compat` 子路径导出，零新增依赖）
 - ✅ 安装门禁（`--gate` / `/install`，GT001–GT003，审过才装）
 - ⬜ 规则文档站与 capability registry
 - ⬜ `skill_ab`：同一 prompt 带/不带技能各跑一次，比较 token、延迟和输出
@@ -684,7 +688,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 371 个用例
+npm test          # 378 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

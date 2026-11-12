@@ -31,7 +31,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Shows which skills the model never uses.** The panel's Usage tab ranks skills by load count across sessions — the dynamic evidence static checks cannot give you.
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
-- **One plugin, two component rows, switched independently.** The second row mounts Claude Code / Codex / ZCode skill directories into dsh; switching it off leaves the checkup untouched. Diagnosis stays the main job; mounting is optional.
+- **One plugin, three component rows, switched independently.** The second row mounts Claude Code / Codex / ZCode skill directories into dsh; the third is the install gate — switch it off in the plugin page when you knowingly want to install a plugin it would refuse. Diagnosis stays the main job; the other two rows are optional.
 - **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
 
 ## Install
@@ -42,7 +42,7 @@ dsh plugin --profile <your-profile> add dsh-skill-doctor
 
 That installs the latest version; pin it by appending a version, e.g. `@0.17.0`.
 
-From 0.14.0 the plugin page shows **two component rows** (checkup / external skill sources), each with its own switch. The second row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
+From 0.14.0 the plugin page shows **three component rows** (checkup / install gate / external skill sources), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
 Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 
@@ -315,7 +315,9 @@ npx --package dsh-skill-doctor dsh-skill-lint <candidate-dir> --json --warn-as-e
 
 ### Install gate (inspect before installing)
 
-This release adds an **optional** install gate. It fetches the registry tarball, inspects it in memory, refuses on high-risk findings, and only then calls dsh's official `installBundle`. Both entry points share one verdict:
+This release adds an **optional** install gate. It fetches the registry tarball, inspects it in memory, refuses on high-risk findings, and only then calls dsh's official `installBundle`. All three entry points share one verdict:
+
+**Turning it off**: the gate is its own component row (`skill-doctor-gate`). Switching it off in the plugin page releases installs started from the plugin page and from model tools; `--gate` on the command line and the `/install` command belong to the main row and still inspect. The switch takes effect immediately — the row switch unloads that fiber, and the restore function registered through `ctx.effect` puts `installBundle` back, so no restart is needed (inferred from the same mechanism the compat row uses; this row has not been stepped through in a real dsh build). The old `installGate` config key is still accepted but no longer takes effect, and logs a migration hint.
 
 ```bash
 # Git Bash: inspect only, for scripts to consume the exit code
@@ -333,7 +335,7 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 **Boundaries (more important than the rule list)**:
 
 - **Plugin-page installs are gated, command-line ones are not.** A plugin-page install calls `installBundle` on the `plugin-manager` service instance, and doctor wraps that very method, so **both the plugin page and the `plugin_manager` tool go through the gate**. This is measured, not assumed: wrapping `setBundleEnabled` on the real build showed the plugin-page toggle flow passing through the wrapper. CLI `dsh plugin add` and a hand-edited `package.json` followed by `pnpm install` never touch the service — that is the package manager write path and **cannot be covered**.
-- **Fail open on the passive path.** The plugin-page path refuses only on a GT hit; a fetch failure, network error or a bug in the wrapper **lets the install through with a warning** — one hiccup should not block every install, and the user may not know doctor caused it. The proactive entry points (`--gate` / `/install`) still fail closed. Set `installGate` to `off` to disable the gate entirely.
+- **Fail open on the passive path.** The plugin-page path refuses only on a GT hit; a fetch failure, network error or a bug in the wrapper **lets the install through with a warning** — one hiccup should not block every install, and the user may not know doctor caused it. The proactive entry points (`--gate` / `/install`) still fail closed. For a false positive, or when you knowingly accept the risk, switch the `skill-doctor-gate` row off in the plugin page and install, then switch it back on — no config edit, no restart, no need to uninstall the whole plugin.
 - **The official approval chain is bypassed.** `/install` calls `ctx.pluginManager.installBundle` directly, skipping the `danger-full-access` / per-call approval enforced by the `plugin_manager` tool. It installs with host-process privileges and may run allowed build scripts. That is the cost of an automatic gate.
 - **The inspected and installed package share the exact version and the same registry.** `--gate` accepts a bare name, an exact version or a dist-tag; ranges such as `^1` or `1.x` are rejected. The resolved `name@exactVersion` is passed to `installBundle`. The registry is aligned too: the plugin page passes an explicit `registry` to `installBundle`, and the gate **fetches from that same source** instead of re-reading `~/.npmrc`; `/install` hands the same source back to the installer.
   One difference cannot be removed: when the requested registry is unreachable, pnpm falls back to the configured one, so **byte-identical content is still not guaranteed**. An explicitly passed registry that is not a valid http(s) URL makes the gate return `error` and it does **not** fall back — a silent fallback would recreate the inspect-A-install-B gap.
@@ -380,14 +382,15 @@ Invalid config makes the plugin log one warning and disable itself — it **neve
 
 ## External skill sources (optional second row)
 
-From 0.14.0 the package exposes **two component rows** in the plugin page, each with its own `config` and switch:
+From 0.14.0 the package exposes component rows in the plugin page, each with its own switch (the first two also carry their own `config`). There are **three** today:
 
 | Row | Module | What it does |
 |---|---|---|
 | `skill-doctor` | `dsh-skill-doctor` | Four checkup tools, slash commands, panel (read-only diagnosis) |
+| `skill-doctor-gate` | `dsh-skill-doctor/gate` | Wraps `installBundle` and inspects the tarball before a plugin-page install; switching it off lets the install through |
 | `skill-doctor-compat` | `dsh-skill-doctor/compat` | Mounts Claude Code / Codex / ZCode skill directories into the dsh skill view |
 
-Switching the second row off unloads only the provider; the checkup keeps running. Why two modules: one component row in dsh is one child under `- insert:` in `cordis.patch.yml`, and a row switch acts on that row's whole fiber (unload/mount). Putting both abilities in one `apply()` would force them on and off together, so they live behind two entry points, with `./compat` exposed through `package.json` `exports`.
+Switching any row off unloads only that row: the mount row drops the provider, the gate row removes the wrapper, and the checkup keeps running. Why separate modules: one component row in dsh is one child under `- insert:` in `cordis.patch.yml`, and a row switch acts on that row's whole fiber (unload/mount). Putting several abilities in one `apply()` would force them on and off together, so they live behind separate entry points exposed through `package.json` `exports` (`./compat`, `./gate`).
 
 **Defaults**: all three sources are `true` in the shipped patch, so installing mounts them immediately; missing directories are skipped silently. A native dsh skill always wins over a same-named imported one (rank 100/400 < imported 210-470), and project-level imports beat user-level ones.
 
@@ -427,7 +430,7 @@ Fields are mapped on import: `when_to_use` / `whenToUse` -> `whenToUse`, `disabl
 
 > Update (2026-11-08): `dsh-plugin-skill-autoroute` from the community listens to dsh's native `skills/change` event to invalidate its own catalogue cache, which suggests a cheaper path than a resident `chokidar` watcher. **Unverified**: whether that event can make a third-party provider trigger a registry re-collect (that plugin only invalidates its own cache). Until verified, this plugin still has no hot reload and the conclusion above stands.
 
-> The third-party subpath `name: dsh-skill-doctor/compat` has been verified in a real dsh desktop build: the plugin page shows two component rows, both running. That validates loading and fibers, not the exact provider/source values imported skills get inside a real `/doctor` report. If the second row misbehaves in your environment, check the load error in devtools first.
+> The third-party subpath `name: dsh-skill-doctor/compat` has been verified in a real dsh desktop build: the plugin page showed two component rows, both running (that build predates the third row, `skill-doctor-gate`; it loads the same way). That validates loading and fibers, not the exact provider/source values imported skills get inside a real `/doctor` report. If the second row misbehaves in your environment, check the load error in devtools first.
 
 ### Provenance & shadowing (a new report metric)
 
@@ -571,7 +574,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 - ✅ Skill × plugin consultation (`PL006`)
 - ✅ Rewrite worksheet + confirmed writes (`setDescription`)
 - ✅ Scope parameter, slash commands and the Chinese menu
-- ✅ Two component rows: checkup + optional external skill mounting (`./compat` subpath export, zero new dependencies)
+- ✅ Three component rows: checkup + install gate + optional external skill mounting (`./gate`, `./compat` subpath exports, zero new dependencies)
 - ⬜ Rule documentation site and capability registry
 - ⬜ `skill_ab`: run the same prompt with and without a skill, compare tokens, latency and output
 
@@ -580,7 +583,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 371 tests
+npm test          # 378 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```
