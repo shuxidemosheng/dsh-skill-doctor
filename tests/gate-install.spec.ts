@@ -11,7 +11,7 @@ import { installAfterGate, type GateResult } from '../src/plugins/gate'
 function gate(decision: 'pass' | 'block' | 'error'): GateResult {
   const base: GateResult = {
     spec: 'demo@1.0.0', name: 'demo', version: '1.0.0', installSpec: 'demo@1.0.0',
-    tarball: 'https://registry.example/demo-1.0.0.tgz',
+    tarball: 'https://registry.example/demo-1.0.0.tgz', registry: 'https://registry.example/',
     decision, findings: [],
     review: { pkg: 'demo', dir: '<tarball>', hints: [], focus: [], notes: [] },
     notes: [],
@@ -60,9 +60,21 @@ describe('installAfterGate only installs after a pass', () => {
     const installBundle = vi.fn(async () => ({ application: 'applied', changed: true }))
     const lines = await installAfterGate(fakeCtx({ installBundle }), 'demo', gate('pass'))
     expect(installBundle).toHaveBeenCalledTimes(1)
-    // 关键：用门禁解析出的精确版本，而不是用户输入的原始 spec。
-    expect(installBundle).toHaveBeenCalledWith('demo@1.0.0', { saveExact: true })
+    // 关键：用门禁解析出的精确版本，而不是用户输入的原始 spec；
+    // 同时把取包用的 registry 一并交给安装，避免两边各读一次配置而分叉。
+    expect(installBundle).toHaveBeenCalledWith('demo@1.0.0', {
+      saveExact: true,
+      registry: 'https://registry.example/',
+    })
     expect(lines.join('\n')).toContain('application=applied')
+  })
+
+  it('omits registry when the gate result carries none', async () => {
+    const installBundle = vi.fn(async () => ({ application: 'applied', changed: true }))
+    // 门禁未解析出源（例如测试里手写的空 registry）时不要传空串给 pnpm。
+    const noRegistry = { ...gate('pass'), registry: '' }
+    await installAfterGate(fakeCtx({ installBundle }), 'demo', noRegistry)
+    expect(installBundle).toHaveBeenCalledWith('demo@1.0.0', { saveExact: true })
   })
 
   it('surfaces an install error without throwing', async () => {

@@ -423,7 +423,9 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 - **覆盖插件页，但拦不住命令行。** 插件页的安装会经过 `plugin-manager` 服务实例上的 `installBundle`，doctor 包装了该方法，所以**插件页与模型调 `plugin_manager` 都会被拦住**。这一点是实测的：在真实 dsh 里包装 `setBundleEnabled` 后，插件页开关组合包确实经过包装（remote 按实例属性取方法）。但 CLI 的 `dsh plugin add`、手改 `package.json` 后的 `pnpm install` 不经过服务，属于包管理器的写入路径，**无法覆盖**。
 - **被动经过时放行优先。** 插件页那条路只对「命中 GT 规则」阻断；取不到包、网络失败或包装自身出错时**放行并记一条 warn**——一次网络抖动不该让你什么都装不上，而且你未必知道是 doctor 导致的。主动入口（`--gate` / `/install`）仍然 fail closed。误报时把 `installGate` 设为 `off` 即可关闭门禁，不必卸载插件。
 - **会绕过官方审批链。** `/install` 直接调 `ctx.pluginManager.installBundle`，不会经过 `plugin_manager` 工具的 `danger-full-access` / 单次批准（那层检查在 tool 层），等于以宿主进程权限安装并执行允许的构建脚本。这是自动门禁的代价，用之前要接受。
-- **审的和装的是同一个精确版本。** `--gate` 只接受包名、精确版本或 dist-tag，拒绝 `^1`、`~1`、`1.x` 这类范围表达式；解析出确切版本后，`/install` 用 `name@exactVersion` 安装。但 tarball 来自 `~/.npmrc` 的 registry，而 `installBundle` 内部由 pnpm 自行下载，**无法保证 100% 是同一份字节**。
+- **审的和装的是同一个精确版本、同一个源。** `--gate` 只接受包名、精确版本或 dist-tag，拒绝 `^1`、`~1`、`1.x` 这类范围表达式；解析出确切版本后，`/install` 用 `name@exactVersion` 安装。源也做了对齐：插件页调 `installBundle` 时会显式传 `registry`，门禁**直接用它取包**（而不是自己再去读 `~/.npmrc`），`/install` 再把同一个源交回安装。
+  仍有一层消不掉的差异：pnpm 在指定源不可达时会回退到本机配置的备用源，所以**字节不保证完全相同**。另外显式传入的 registry 若不是合法 http(s) 地址，门禁直接判 `error` 而**不回退**——静默回退会重新造出「审 A 装 B」。
+- **取包失败说得出原因。** `problem` 只给固定类别名，不给 URL 或本机路径：`version-not-found`、`http-404`、`network-error`、`timeout`、`bad-packument`、`no-tarball`、`tarball-too-large`、`registry-override-invalid`。之所以列清楚，是因为以前网络失败会退化成 `UNKNOWN`，用户无从判断是网络不通还是包有问题。
 - **不落盘、不执行被审包的代码、不删文件。** tarball 在内存里解压，手写 tar 解析读文本；没有临时目录，也就没有清理动作。
 - **不是恶意代码判定。** 不做 AST / 沙箱 / 依赖供应链审计；GT 规则是结构性启发式，会漏报也会误报。
 
@@ -682,7 +684,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 362 个用例
+npm test          # 371 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

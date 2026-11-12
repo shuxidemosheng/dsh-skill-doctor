@@ -15,7 +15,7 @@ import { registerInstallGate, type GateResult } from '../src/plugins/gate'
 function gateResult(decision: 'pass' | 'block' | 'error'): GateResult {
   const base: GateResult = {
     spec: 'demo@1.0.0', name: 'demo', version: '1.0.0', installSpec: 'demo@1.0.0',
-    tarball: 'https://registry.example/demo-1.0.0.tgz',
+    tarball: 'https://registry.example/demo-1.0.0.tgz', registry: 'https://registry.example/',
     decision, findings: [],
     review: { pkg: 'demo', dir: '<tarball>', hints: [], focus: [], notes: [] },
     notes: [],
@@ -75,6 +75,38 @@ describe('registerInstallGate', () => {
     const { ctx, infos } = fakeCtx(undefined)
     expect(() => registerInstallGate(ctx as never, 'block')).not.toThrow()
     expect(infos.some(message => message.includes('install gate unavailable'))).toBe(true)
+  })
+
+  it('passes the registry from installBundle options to the gate', async () => {
+    // 插件页调 installBundle 时会显式传 registry，那就是这次安装真正要用的源。
+    // 门禁必须审同一个源，否则「审 A 装 B」，门禁形同失效。
+    const { manager } = fakeManager()
+    const { ctx } = fakeCtx(manager)
+    const seen: Array<{ registry?: string } | undefined> = []
+    registerInstallGate(ctx as never, 'block', async (_spec, options) => {
+      seen.push(options)
+      return gateResult('pass')
+    })
+
+    await (manager.installBundle as (spec: string, options?: unknown) => Promise<unknown>)(
+      'demo@1.0.0',
+      { registry: 'https://registry.npmjs.org/', enabled: false },
+    )
+    expect(seen).toEqual([{ registry: 'https://registry.npmjs.org/' }])
+  })
+
+  it('passes no options when the install call omits the registry', async () => {
+    const { manager } = fakeManager()
+    const { ctx } = fakeCtx(manager)
+    const seen: unknown[] = []
+    registerInstallGate(ctx as never, 'block', async (_spec, options) => {
+      seen.push(options)
+      return gateResult('pass')
+    })
+
+    await (manager.installBundle as (spec: string) => Promise<unknown>)('demo@1.0.0')
+    // undefined 而不是 {}：让 gateSpec 走本机 npm 配置，而不是被空对象干扰。
+    expect(seen).toEqual([undefined])
   })
 
   it('refuses the install without calling the original method when a rule hits', async () => {

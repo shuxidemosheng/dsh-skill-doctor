@@ -54,6 +54,16 @@ export interface GateFinding {
   readonly where?: string
 }
 
+/**
+ * 门禁的取包来源。
+ *
+ * `registry` 来自 `installBundle(spec, { registry })`——插件页会显式传它，
+ * 也就是「这次安装真正要用的源」。不传时按本机 npm 配置（环境变量 → ~/.npmrc → 官方）。
+ */
+export interface GateOptions {
+  readonly registry?: string
+}
+
 export interface GateResult {
   readonly spec: string
   readonly name: string
@@ -62,6 +72,8 @@ export interface GateResult {
   readonly installSpec: string
   /** tarball URL 只用于定位，报告里可以展示（registry 是公开地址，不是本机路径）。 */
   readonly tarball: string
+  /** 实际取包的 registry base。插件页传了 `options.registry` 时就是它，否则按本机 npm 配置。 */
+  readonly registry: string
   /** pass = 可装；block = 命中高危；error = 没审成，按 fail closed 也不装。 */
   readonly decision: 'pass' | 'block' | 'error'
   readonly findings: readonly GateFinding[]
@@ -207,19 +219,53 @@ export function parseRegistrySpec(spec: string): { name: string; version?: strin
 }
 
 /** 从 IO / 网络异常里只取错误码，绝不把 error.message 写进报告（它可能含本机路径）。 */
+/** 抛带 code 的错误。`reasonOf` 只取 code 不取 message，所以 `problem` 里
+ * 只会出现固定类别名，不会把 registry 地址或本机路径带进报告。 */
+function codedError(code: string): Error {
+  const error = new Error(code)
+  ;(error as { code?: string }).code = code
+  return error
+}
+
+/**
+ * 把异常压成一个固定的类别名，用于 `problem`。
+ *
+ * 只看 `code` 不取 `message`：`fetch` 的错误可能带完整 URL，一旦是内网
+ * registry 就会把地址写进报告。但 `fetch` 的网络失败抛的是没有 code 的
+ * TypeError，超时抛的是 DOMException，所以这两类单列出来——否则用户只会
+ * 看到 `UNKNOWN`，完全不知道是「网络不通」还是「版本不存在」。
+ */
 function reasonOf(error: unknown): string {
   const code = (error as { code?: unknown } | null)?.code
-  return typeof code === 'string' ? code : 'UNKNOWN'
+  if (typeof code === 'string') return code
+  const name = (error as { name?: unknown } | null)?.name
+  if (name === 'TimeoutError') return 'timeout'
+  if (name === 'AbortError') return 'aborted'
+  if (error instanceof TypeError) return 'network-error'
+  return 'UNKNOWN'
 }
 
 /**
  * 决定用哪个 registry。
  *
- * 优先级：环境变量 `npm_config_registry` → 用户 `~/.npmrc` 的 `registry=` →
- * 官方源。前两项与 npm / pnpm 读到的是同一套配置，尽量让「审的 tarball」和
- * 「装的 tarball」来自同一个源。这里只读配置，不写任何文件。
+ * 优先级：显式传入的 `override`（插件页 `installBundle` 的 `options.registry`，
+ * 也就是这次安装真正要用的源）→ 环境变量 `npm_config_registry` → 用户
+ * `~/.npmrc` 的 `registry=` → 官方源。只读配置，不写任何文件。
+ *
+ * 为什么要 override：插件页调 `installBundle` 时会显式传 registry。若门禁仍按
+ * `~/.npmrc` 取包，审的和装的就可能来自两个不同的源——UI 指到私有源而
+ * `.npmrc` 是公网源时，门禁等于审了一个不相干的包然后放行，形同失效。
+ *
+ * 显式传了却不合法时**抛错而不回退**：静默回退会重新造出「审 A 装 B」。
+ * 上层会把它记成 `decision='error'`（主动入口 fail closed，插件页 fail open）。
  */
-function registryBase(): string {
+function registryBase(override?: string): string {
+  if (override !== undefined) {
+    const trimmed = override.trim().replace(/\/+$/, '')
+    if (trimmed.length === 0) throw codedError('registry-override-empty')
+    if (!/^https?:\/\//.test(trimmed)) throw codedError('registry-override-invalid')
+    return trimmed
+  }
   const fromEnv = process.env.npm_config_registry
   if (typeof fromEnv === 'string' && /^https?:\/\//.test(fromEnv)) {
     return fromEnv.replace(/\/+$/, '')
@@ -247,12 +293,16 @@ function registryBase(): string {
  * `installSpec` 是审/装一致性的关键：门禁审的是 `name@exactVersion` 的 tarball，
  * 安装时也强制传同一个精确版本，避免范围表达式解析出不同的版本。
  */
-async function resolveMetadata(spec: { name: string; version?: string }): Promise<{
+async function resolveMetadata(
+  spec: { name: string; version?: string },
+  registryOverride?: string,
+): Promise<{
   version: string
   tarball: string
   installSpec: string
+  registry: string
 }> {
-  const base = registryBase()
+  const base = registryBase(registryOverride)
   // scoped 包 `@scope/name` 的斜杠必须编码，否则 registry 会当成路径分隔符。
   const encoded = spec.name.startsWith('@') ? spec.name.replace('/', '%2f') : spec.name
   const response = await fetch(`${base}/${encoded}`, {
@@ -260,32 +310,32 @@ async function resolveMetadata(spec: { name: string; version?: string }): Promis
     // 精简 packument：只要 versions / dist-tags / dist，体积比完整元数据小很多。
     headers: { accept: 'application/vnd.npm.install-v1+json' },
   })
-  if (!response.ok) throw new Error(`http ${response.status}`)
+  if (!response.ok) throw codedError(`http-${response.status}`)
   const doc: unknown = await response.json()
-  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('bad packument')
+  if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) throw codedError('bad-packument')
   const record = doc as Record<string, unknown>
   const versions = (record.versions ?? {}) as Record<string, Record<string, unknown>>
   const tags = (record['dist-tags'] ?? {}) as Record<string, string>
 
   const wanted = spec.version ?? tags.latest
-  if (typeof wanted !== 'string' || wanted.length === 0) throw new Error('no version')
+  if (typeof wanted !== 'string' || wanted.length === 0) throw codedError('no-version')
   // wanted 可能是精确版本，也可能是 dist-tag（latest / next）。
   const exact = versions[wanted] !== undefined ? wanted : tags[wanted]
-  if (typeof exact !== 'string' || versions[exact] === undefined) throw new Error('version not found')
+  if (typeof exact !== 'string' || versions[exact] === undefined) throw codedError('version-not-found')
   const dist = versions[exact]!.dist
   const tarball = (dist as { tarball?: unknown } | null)?.tarball
-  if (typeof tarball !== 'string' || !/^https?:\/\//.test(tarball)) throw new Error('no tarball')
-  return { version: exact, tarball, installSpec: `${spec.name}@${exact}` }
+  if (typeof tarball !== 'string' || !/^https?:\/\//.test(tarball)) throw codedError('no-tarball')
+  return { version: exact, tarball, installSpec: `${spec.name}@${exact}`, registry: base }
 }
 
 /** 下载 tarball；带超时和体积上限，避免一个恶意包把内存吃满。 */
 async function downloadTarball(url: string): Promise<Buffer> {
   const response = await fetch(url, { signal: AbortSignal.timeout(30_000) })
-  if (!response.ok) throw new Error(`http ${response.status}`)
+  if (!response.ok) throw codedError(`http-${response.status}`)
   const declared = Number(response.headers.get('content-length') ?? '0')
-  if (declared > MAX_TARBALL_BYTES) throw new Error('tarball too large')
+  if (declared > MAX_TARBALL_BYTES) throw codedError('tarball-too-large')
   const bytes = Buffer.from(await response.arrayBuffer())
-  if (bytes.length > MAX_TARBALL_BYTES) throw new Error('tarball too large')
+  if (bytes.length > MAX_TARBALL_BYTES) throw codedError('tarball-too-large')
   return bytes
 }
 
@@ -419,10 +469,10 @@ function buildReview(
  * 门禁主流程：校验 spec → 取元数据 → 下载 tarball → 内存解压 → 审 → 判定。
  * 任何一步失败都返回 `decision: 'error'`，调用方不得把它当通过。
  */
-export async function gateSpec(rawSpec: string): Promise<GateResult> {
+export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<GateResult> {
   const parsed = parseRegistrySpec(rawSpec)
   const empty = (problem: string): GateResult => ({
-    spec: rawSpec, name: '', version: '', installSpec: '', tarball: '',
+    spec: rawSpec, name: '', version: '', installSpec: '', tarball: '', registry: '',
     decision: 'error', findings: [], problem,
     review: { pkg: '', dir: '<tarball>', hints: [], focus: [], notes: [] },
     notes: [],
@@ -431,9 +481,9 @@ export async function gateSpec(rawSpec: string): Promise<GateResult> {
     return empty('invalid-spec：第一版只支持 registry 包名（可带版本），不支持 git / URL / 本地路径 / .tgz。')
   }
 
-  let resolved: { version: string; tarball: string; installSpec: string }
+  let resolved: { version: string; tarball: string; installSpec: string; registry: string }
   try {
-    resolved = await resolveMetadata(parsed)
+    resolved = await resolveMetadata(parsed, options?.registry)
   } catch (error) {
     // npm view 的 stderr 常含本机路径，这里只留错误码与固定类别。
     return empty(`resolve-failed：${reasonOf(error)}`)
@@ -478,6 +528,7 @@ export async function gateSpec(rawSpec: string): Promise<GateResult> {
     version: resolved.version,
     installSpec: resolved.installSpec,
     tarball: resolved.tarball,
+    registry: resolved.registry,
     decision: findings.length > 0 ? 'block' : 'pass',
     findings,
     review,
@@ -515,6 +566,7 @@ export function gateMarkdownLines(result: GateResult): string[] {
   const lines: string[] = ['## 安装门禁', '']
   lines.push(`> 审的是 tarball 内容，不落盘、不执行被审包代码。命中高危规则即拒绝；取包失败也按拒绝处理。`, '')
   lines.push(`审查对象：\`${result.spec}\`；版本：\`${result.version}\`；结论：**${result.decision === 'pass' ? '通过' : result.decision === 'block' ? '拒绝安装' : '未能完成审查'}**。`)
+  if (result.registry.length > 0) lines.push(`取包来源：\`${result.registry}\`（插件页安装时用它传的源，其余入口按本机 npm 配置）。`)
   if (result.decision === 'error') lines.push('', `原因：${result.problem ?? '未知原因'}`, '', '按 fail closed 处理，不安装。')
   lines.push('', `RV 提示 ${result.review.hints.length} 条（仅供参考，不参与判定）：`)
   for (const hint of result.review.hints) {
@@ -526,7 +578,8 @@ export function gateMarkdownLines(result: GateResult): string[] {
     lines.push('', `- **ERROR ${finding.id}** ${finding.title}${finding.where === undefined ? '' : `（\`${finding.where}\`）`}`)
     lines.push(`  - ${finding.detail}`)
   }
-  lines.push('', '**边界**：只覆盖 `--gate` 与 `/install` 两个入口；插件页安装走 `plugin-manager` 自己的链路，不受本门禁约束。')
+  lines.push('', '**边界**：覆盖 `--gate`、`/install`、插件页与模型工具发起的安装（后两者经过包装的 `installBundle`）；`dsh plugin add` 与手改 `package.json` 后的 `pnpm install` 不走服务，无法覆盖。')
+  lines.push('', '**同源限制**：取包用 `options.registry` 指定的源，但 pnpm 在该源不可达时会回退到本机配置的备用源，因此「审的字节」与「装的字节」不保证完全相同。')
   return lines
 }
 
@@ -538,6 +591,7 @@ export function gateJson(result: GateResult): Record<string, unknown> {
     version: result.version,
     installSpec: result.installSpec,
     tarball: result.tarball,
+    registry: result.registry,
     decision: result.decision,
     disclaimer: 'static gate, not a malware verdict',
     findings: result.findings.map(finding => ({ ...finding })),
@@ -583,7 +637,11 @@ export async function installAfterGate(
       options?: Record<string, unknown>,
     ) => Promise<unknown>
     // 用门禁解析出的精确版本，而不是用户输入的原始 spec。
-    const changed = await install(gate.installSpec, { saveExact: true })
+    const changed = await install(gate.installSpec, {
+      saveExact: true,
+      // 把门禁实际取包用的源一并交给安装，避免两边各读一次配置而分叉。
+      ...gate.registry.length === 0 ? {} : { registry: gate.registry },
+    })
     const result = (changed ?? {}) as Record<string, unknown>
     // 只挑不含本机路径的安全字段，ChangeResult 里可能有目录信息。
     const application = typeof result.application === 'string' ? result.application : 'unknown'
@@ -638,7 +696,7 @@ export function registerInstallGate(
   ctx: Context,
   mode: 'block' | 'off',
   /** 测试可注入审查函数，跳过网络；生产调用方不传，默认用 gateSpec。 */
-  inspect?: (spec: string) => Promise<GateResult>,
+  inspect?: (spec: string, options?: GateOptions) => Promise<GateResult>,
 ): void {
   const probe = ctx as unknown as {
     get?: (name: string, strict?: boolean) => unknown
@@ -673,9 +731,17 @@ export function registerInstallGate(
   const runGate = inspect ?? gateSpec
 
   const wrapped = async (spec: string, options?: unknown): Promise<unknown> => {
+    // 插件页会在这里传 `registry`——那才是这次安装真正要用的源，
+    // 交给门禁才能保证「审的包」和「装的包」来自同一处。
+    const declared = (options as { registry?: unknown } | undefined)?.registry
+    const registryOverride =
+      typeof declared === 'string' && declared.length > 0 ? declared : undefined
     let gate: GateResult
     try {
-      gate = await runGate(String(spec))
+      gate = await runGate(
+        String(spec),
+        registryOverride === undefined ? undefined : { registry: registryOverride },
+      )
     } catch (error) {
       probe.logger.warn(
         `skill-doctor: install gate skipped (${reasonOf(error)}); installing without inspection`,

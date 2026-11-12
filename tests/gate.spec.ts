@@ -5,13 +5,14 @@
  * 这样能精确验证解析器对 `package/` 前缀、文本扩展名、体积上限的处理。
  */
 import { gzipSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   evaluateGateRules,
   filesFromTarball,
   gateJson,
   gateMarkdownLines,
   gatePlainLines,
+  gateSpec,
   parseRegistrySpec,
   untarGzip,
   type GateResult,
@@ -182,10 +183,66 @@ describe('GT rules only block on structural high-risk signals', () => {
   })
 })
 
+describe('gateSpec failure naming', () => {
+  it('names a network failure instead of returning UNKNOWN', async () => {
+    // fetch 的网络失败抛的是没有 code 的 TypeError。以前这里会退化成
+    // `resolve-failed：UNKNOWN`，用户无从判断是网络不通还是包有问题。
+    vi.stubGlobal('fetch', async () => { throw new TypeError('fetch failed') })
+    try {
+      const result = await gateSpec('demo@1.0.0', { registry: 'https://registry.example/' })
+      expect(result.decision).toBe('error')
+      expect(result.problem).toContain('network-error')
+      expect(result.problem).not.toContain('UNKNOWN')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('names a missing version from a reachable registry', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({
+      versions: { '1.0.0': { dist: { tarball: 'https://registry.example/demo-1.0.0.tgz' } } },
+      'dist-tags': { latest: '1.0.0' },
+    }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    try {
+      const result = await gateSpec('demo@2.0.0', { registry: 'https://registry.example/' })
+      expect(result.decision).toBe('error')
+      expect(result.problem).toContain('version-not-found')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('names an http status when the package does not exist', async () => {
+    vi.stubGlobal('fetch', async () => new Response('{}', { status: 404 }))
+    try {
+      const result = await gateSpec('no-such-package', { registry: 'https://registry.example/' })
+      expect(result.problem).toContain('http-404')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('gateSpec registry override', () => {
+  it('fails closed on a non-http registry instead of falling back', async () => {
+    // 静默回退会重新造出「审 A 装 B」；这里必须明确记成 error。
+    const result = await gateSpec('demo@1.0.0', { registry: 'ftp://mirror.internal/' })
+    expect(result.decision).toBe('error')
+    expect(result.problem).toContain('registry-override-invalid')
+    expect(result.problem).not.toContain('mirror.internal')
+  })
+
+  it('fails closed on an empty registry', async () => {
+    const result = await gateSpec('demo@1.0.0', { registry: '   ' })
+    expect(result.decision).toBe('error')
+    expect(result.problem).toContain('registry-override-empty')
+  })
+})
+
 describe('gate output', () => {
   const passed: GateResult = {
     spec: 'demo@1.0.0', name: 'demo', version: '1.0.0', installSpec: 'demo@1.0.0',
-    tarball: 'https://registry.example/demo-1.0.0.tgz',
+    tarball: 'https://registry.example/demo-1.0.0.tgz', registry: 'https://registry.example/',
     decision: 'pass', findings: [],
     review: { pkg: 'demo', dir: '<tarball>', hints: [], focus: [], notes: [] },
     notes: [],
@@ -221,11 +278,22 @@ describe('gate output', () => {
     expect(text).toContain('download-failed')
   })
 
-  it('Markdown shows the blocked rule and the plugin-page boundary', () => {
+  it('Markdown shows the blocked rule, the registry and the real coverage boundary', () => {
     const text = gateMarkdownLines(blocked).join('\n')
     expect(text).toContain('GT001')
     expect(text).toContain('拒绝安装')
-    expect(text).toContain('插件页安装')
+    // 边界文案必须提到「插件页也覆盖了」以及「哪条路覆盖不了」，
+    // 不能像 0.16.0 那样写死「只覆盖 --gate 与 /install」。
+    expect(text).toContain('插件页')
+    expect(text).toContain('无法覆盖')
+    expect(text).toContain('取包来源')
+    expect(text).toContain('https://registry.example/')
+  })
+
+  it('Markdown warns that pnpm may fall back to another registry', () => {
+    const text = gateMarkdownLines(passed).join('\n')
+    expect(text).toContain('同源限制')
+    expect(text).toContain('回退')
   })
 
   it('never emits an absolute local path', () => {

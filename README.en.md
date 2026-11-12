@@ -335,7 +335,9 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 - **Plugin-page installs are gated, command-line ones are not.** A plugin-page install calls `installBundle` on the `plugin-manager` service instance, and doctor wraps that very method, so **both the plugin page and the `plugin_manager` tool go through the gate**. This is measured, not assumed: wrapping `setBundleEnabled` on the real build showed the plugin-page toggle flow passing through the wrapper. CLI `dsh plugin add` and a hand-edited `package.json` followed by `pnpm install` never touch the service — that is the package manager write path and **cannot be covered**.
 - **Fail open on the passive path.** The plugin-page path refuses only on a GT hit; a fetch failure, network error or a bug in the wrapper **lets the install through with a warning** — one hiccup should not block every install, and the user may not know doctor caused it. The proactive entry points (`--gate` / `/install`) still fail closed. Set `installGate` to `off` to disable the gate entirely.
 - **The official approval chain is bypassed.** `/install` calls `ctx.pluginManager.installBundle` directly, skipping the `danger-full-access` / per-call approval enforced by the `plugin_manager` tool. It installs with host-process privileges and may run allowed build scripts. That is the cost of an automatic gate.
-- **The inspected and installed version are locked together.** `--gate` accepts a bare name, an exact version or a dist-tag; ranges such as `^1` or `1.x` are rejected. The resolved `name@exactVersion` is passed to `installBundle`. The tarball comes from the registry in `~/.npmrc`, while `installBundle` downloads again via pnpm, so **byte-identical content is not guaranteed**.
+- **The inspected and installed package share the exact version and the same registry.** `--gate` accepts a bare name, an exact version or a dist-tag; ranges such as `^1` or `1.x` are rejected. The resolved `name@exactVersion` is passed to `installBundle`. The registry is aligned too: the plugin page passes an explicit `registry` to `installBundle`, and the gate **fetches from that same source** instead of re-reading `~/.npmrc`; `/install` hands the same source back to the installer.
+  One difference cannot be removed: when the requested registry is unreachable, pnpm falls back to the configured one, so **byte-identical content is still not guaranteed**. An explicitly passed registry that is not a valid http(s) URL makes the gate return `error` and it does **not** fall back — a silent fallback would recreate the inspect-A-install-B gap.
+- **Failures name their cause.** `problem` carries a fixed category, never a URL or local path: `version-not-found`, `http-404`, `network-error`, `timeout`, `bad-packument`, `no-tarball`, `tarball-too-large`, `registry-override-invalid`. This matters because network failures used to collapse into `UNKNOWN`, leaving no way to tell a broken connection from a bad package.
 - **Nothing is written during inspection.** The tarball is decompressed in memory with a hand-written tar reader; no temp directory, no cleanup, no code from the reviewed package executed.
 - **Not a malware verdict.** No AST, sandbox or dependency supply-chain audit. The GT rules are structural heuristics with both false negatives and false positives.
 
@@ -578,7 +580,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 362 tests
+npm test          # 371 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```
