@@ -97,11 +97,11 @@ so only tool names are shown.
 
 The panel reads the current session window, so **calls that scrolled out are gone**; entries it has seen are kept, so totals never go backwards. The footer says so.
 
-The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: seven buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation, plugin review) — click one, it highlights and puts the matching `/command ` into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
+The overlay has three tabs: **Modes**, **Activity**, **Usage**. **Modes is the entry point**: eight buttons (full checkup, one directory, one skill, rewrite worksheet, follow-up, plugin consultation, plugin review, gated install) — click one, it highlights and puts the matching `/command ` into the composer; add a path or a skill name and press enter. When the composer API is unavailable it falls back to the clipboard and says so in the panel. Usage is **cross-session**: how many times each skill was loaded into context, when it was last used, and how many sessions are covered — the "which skills does the model never use" ranking is the dynamic evidence behind static diagnosis. Data lives only in this machine's browser storage (localStorage); it is never uploaded, never written into skill files, and can be cleared with one click in the panel. Skills the model reads directly via `read` are not counted — the ownership is unknowable, so it prefers under-counting over mis-counting.
 
 ## Slash commands (the fastest entry point in the client)
 
-Seven commands ship with the plugin. Type `/` — the menu gains a Chinese group; pick one and it becomes a **blue chip** in the composer, add the argument and press enter. They run **without the model**, so they are instant and cannot be reworded:
+Eight commands ship with the plugin. Type `/` — the menu gains a Chinese group; pick one and it becomes a **blue chip** in the composer, add the argument and press enter. They run **without the model**, so they are instant and cannot be reworded:
 
 | Menu | Composer | What it does |
 |---|---|---|
@@ -112,6 +112,7 @@ Seven commands ship with the plugin. Type `/` — the menu gains a Chinese group
 | 诊断 | `/why <skill>` | Why one skill is not being picked, with a concrete fix |
 | 会诊 | `/clash` | Whether a plugin broke the skill-directory config |
 | 审查 | `/review <pkg>` | Static risk hints for a newly installed plugin and its conflicts with installed ones; empty reads the last automatic review |
+| 安装 | `/install <pkg>` | Gate a registry tarball first, then install through the official service; a high-risk hit refuses the install |
 
 Output is plain text (one node in the flow, no Markdown tables), so it is trimmed to "what to look at first":
 
@@ -278,7 +279,7 @@ The model can also call `plugin_doctor` with `review: "<pkg>"`, which adds an "I
 **Boundaries (more important than the rule list)**:
 
 - These are **static heuristic hints, not a security verdict**. They do not replace a security review and do not decide whether code is malicious. `eval`, `child_process` and `postinstall` appear in almost every bundled artifact, so those rules are deliberately `info`; a hit is not a malware verdict. No AST, sandbox or dependency supply-chain audit.
-- No install interception, rollback or deletion; no code from the reviewed package is executed. Only `readFile`.
+- `--review` itself is read-only: no rollback, no deletion, no code from the reviewed package is executed. Only `readFile`. Whether to install is decided by the separate gate below.
 - Directories only, **no `.tgz` parsing**; the package's inner `node_modules` is skipped; single files over 2 MiB, bundles over 10 MiB and more than 500 files are skipped and noted in the report.
 - **Automatic triggering only covers installs from the plugin page**: it subscribes to `plugin-manager/changed`. That event's payload has only `reason` and **no package name**, so the new package is located by diffing `scanProfile`'s `bundles` before and after; official docs say CLI installs and manual edits do not emit it. Subscription uses the in-process Cordis event table (`ctx.on`), a single instance shared by the whole context tree — independent of load order and of whether the contexts are siblings. `tests/review.spec.ts` pins that premise down with a real `Context`, and has an end-to-end case. **Verified against the real dsh desktop build** (0.15.0 build): `apply` ran, `ctx.on` subscribed, and toggling a plugin delivered two `{reason:"bundle"}` events. `bundles` did not change in that test, so the diff was empty and the review correctly skipped; the step where an actually new package triggers a review has not been exercised. Results go to an in-memory cache plus one log line, read via `/review`. **Do not rely on it as a gate.**
 
@@ -310,7 +311,32 @@ npx --package dsh-skill-doctor dsh-skill-lint <candidate-dir> --json --warn-as-e
 
 `--json` gives machine-readable `ok / summary / findings`, and `--warn-as-error` makes warnings fail too; exit code `1` can drive a script that decides whether to continue. SD012 flags raw ESC, invisible Unicode tag characters and download-piped-straight-into-a-shell forms, all as `warn` heuristics: a skill that teaches `curl` will also match, and a hit is not a malware verdict.
 
-**You start this check yourself.** The plugin does not hook the dsh install flow, refuse a write, or delete files. Community "audit before install, refuse on a blocking finding" features require the plugin to own the write path; this plugin is a read-only diagnostic and ships no installer. That is why this does not contradict "pre-install gating is out of scope": the gate lives in the command line, not in the plugin.
+**You start this skill check yourself**; the plugin does not hook the skill import flow.
+
+### Install gate (inspect before installing)
+
+This release adds an **optional** install gate. It fetches the registry tarball, inspects it in memory, refuses on high-risk findings, and only then calls dsh's official `installBundle`. Both entry points share one verdict:
+
+```bash
+# Git Bash: inspect only, for scripts to consume the exit code
+npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --json
+```
+
+```text
+/install <pkg-or-exact-version>    slash command; inspects then installs inside dsh
+```
+
+**Rules**: GT001 install scripts that pipe downloaded content into a shell, GT002 patches that overwrite official-scope entries or silently disable another plugin with `disabled: true`, GT003 runtime dependencies pointing at non-registry remote sources. These are `error`-level and refuse the install. RV001-RV012 remain `info`/`warn` hints shown for context only — normal bundles almost always contain `eval` or `postinstall`, so using them to block would reject legitimate packages.
+
+**Exit codes**: `--gate` returns `0` on pass, `1` on a high-risk hit, `2` when the inspection could not finish. Any fetch, parse or network failure yields `decision: 'error'` — **fail closed, never treated as a pass**.
+
+**Boundaries (more important than the rule list)**:
+
+- **Only these two entry points are gated.** Installing from the plugin page goes through `plugin-manager` directly; doctor is not on that write path and cannot intercept it.
+- **The official approval chain is bypassed.** `/install` calls `ctx.pluginManager.installBundle` directly, skipping the `danger-full-access` / per-call approval enforced by the `plugin_manager` tool. It installs with host-process privileges and may run allowed build scripts. That is the cost of an automatic gate.
+- **The inspected and installed version are locked together.** `--gate` accepts a bare name, an exact version or a dist-tag; ranges such as `^1` or `1.x` are rejected. The resolved `name@exactVersion` is passed to `installBundle`. The tarball comes from the registry in `~/.npmrc`, while `installBundle` downloads again via pnpm, so **byte-identical content is not guaranteed**.
+- **Nothing is written during inspection.** The tarball is decompressed in memory with a hand-written tar reader; no temp directory, no cleanup, no code from the reviewed package executed.
+- **Not a malware verdict.** No AST, sandbox or dependency supply-chain audit. The GT rules are structural heuristics with both false negatives and false positives.
 
 ```yaml
 - uses: actions/setup-node@v4
@@ -471,7 +497,7 @@ Capability boundaries, not omissions:
 - **Why a plugin failed** — the runtime snapshot projects the fiber phase, not the error, and dsh writes no startup log to disk.
 - **Skills dsh never indexed** — a name that breaks the grammar, or frontmatter that fails to parse, is not in the view at all; point `roots` at that directory to scan files directly.
 - **Whether a skill is well written** — not judged. Auto-fix covers two byte-level rules only.
-- **No install interception** — the plugin hooks no install action and never refuses a write because of a rule; the new plugin review is likewise read-only and never rejects, rolls back or deletes. Use the CLI pre-install self-check above if you want a gate. The announcement budget also reports measured numbers only, without an exceeded verdict.
+- **Plugin-page installs are not gated** — `--review` is read-only and never rejects, rolls back or deletes. Only `--gate` / `/install` refuse, and only for installs they start themselves. The announcement budget also reports measured numbers only, without an exceeded verdict.
 - **Token counts are estimates** — ASCII ≈ 4 chars/token, CJK ≈ 0.75 token/char.
 - **Shadow detection only scans configured roots** — registry-internal candidates are invisible; results are labelled as candidates.
 - **Remote/virtual skills get no file-level checks** — no local path, so encoding and reference rules are skipped.
@@ -528,7 +554,7 @@ Three kinds of skill-adjacent plugins exist, and they answer different questions
 - **Usage boards** (skill scoreboards, call-count rankings): "how often is it used". This plugin's panel counts loads too, but as evidence for diagnosis, not as a long-term dashboard.
 - **Plugin auditors** (ecosystem scoring, route auth, pre-install gating): "is this plugin safe, can I install it" — and **refuse** the install when it is not.
 
-This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. Safety hints come from two heuristic groups, SD012 and the new RV001-RV012; both **only hint, never conclude and never block**. There is no malware verdict, no AST/sandbox/supply-chain audit, and no pre-install gating (that belongs to precheck-style plugins).
+This plugin answers **"why is it broken / why does the model not pick it"** — diagnosis. It has two hint groups (SD012, RV001-RV012) that never conclude, and three gate rules (GT001-GT003) that refuse only installs started through `--gate` / `/install`. There is no malware verdict and no full supply-chain audit; plugin-page installs are not intercepted.
 
 From 0.14.0 the second row also mounts external skill directories, but only as read-only discovery: no browsing, add/remove, import/export, marketplace or hot reload. If `dsh-skill-compat-plus` is installed separately, both providers can coexist (different default names).
 
@@ -551,7 +577,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 325 tests
+npm test          # 353 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

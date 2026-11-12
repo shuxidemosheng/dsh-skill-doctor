@@ -19,6 +19,7 @@ import { renderLintJson, renderLintMarkdown } from './tools/report.js'
 import { renderPluginJson, renderPluginMarkdown } from './plugins/report.js'
 import { scanProfile } from './plugins/scan.js'
 import { reviewBundle, reviewJson, reviewMarkdownLines } from './plugins/review.js'
+import { gateJson, gateMarkdownLines, gateSpec } from './plugins/gate.js'
 import { applyFixes, type FixOutcome, type Verify } from './fixer/apply.js'
 import { setDescription } from './fixer/description.js'
 import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
@@ -41,6 +42,8 @@ interface CliOptions {
   readonly plugins: boolean
   /** `--review <目录>`：审查一个已落盘的插件目录（不解析 .tgz）。 */
   readonly review?: string
+  /** `--gate <spec>`：审 registry tarball，命中高危就不装。 */
+  readonly gate?: string
   readonly profile?: string
   readonly fix: boolean
   readonly apply: boolean
@@ -75,6 +78,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let version = false
   let plugins = false
   let review: string | undefined
+  let gate: string | undefined
   let profile: string | undefined
   let fix = false
   let apply = false
@@ -94,6 +98,12 @@ function parseArgs(argv: readonly string[]): CliOptions {
         const value = argv[++i]
         if (value === undefined || value.trim().length === 0) fail('--review requires a plugin directory')
         review = value.trim()
+        break
+      }
+      case '--gate': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--gate requires a registry spec')
+        gate = value.trim()
         break
       }
       case '--profile': profile = argv[++i]; break
@@ -183,6 +193,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...rules.length === 0 ? {} : { rules },
     plugins,
     ...review === undefined ? {} : { review },
+    ...gate === undefined ? {} : { gate },
     ...profile === undefined ? {} : { profile },
     fix,
     apply,
@@ -205,6 +216,7 @@ function usage(): string {
     'Options:',
     '  --plugins              check installed plugins for structural conflicts (no skill scanning)',
     '  --review <dir>         static heuristics for one unpacked plugin directory (no .tgz)',
+    '  --gate <spec>          inspect a registry tarball before install (exit 1 = blocked)',
     '  --profile <name>       profile to inspect with --plugins (default desktop)',
     '  --json                 machine-readable output',
     '  --warn-as-error        exit 1 when any warning is present',
@@ -232,7 +244,7 @@ function usage(): string {
     '',
     `Rules: ${RULE_IDS.join(', ')}`,
     '',
-    'Exit codes: 0 clean, 1 findings, 2 usage/read error.',
+    'Exit codes: 0 clean / gate passed, 1 findings / gate blocked, 2 usage/read error / gate inconclusive.',
   ].join('\n')
 }
 
@@ -323,6 +335,18 @@ async function main(): Promise<void> {
   }
   if (options.version) {
     process.stdout.write(`${VERSION}\n`)
+    return
+  }
+
+  // 安装门禁：与 --review 一样不依赖技能扫描，先单独分流。
+  // 只有它使用「1 = 被拒绝」这个退出码；--review 的提示恒为 0，两者语义不混用。
+  if (options.gate !== undefined) {
+    const result = await gateSpec(options.gate)
+    process.stdout.write(
+      `${options.json ? JSON.stringify(gateJson(result), null, 2) : gateMarkdownLines(result).join('\n')}\n`,
+    )
+    // fail closed：取包失败（decision === 'error'）也不能当成通过。
+    process.exitCode = result.decision === 'pass' ? 0 : result.decision === 'block' ? 1 : 2
     return
   }
 

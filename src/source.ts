@@ -38,9 +38,9 @@ export interface DoctorCandidate {
 }
 
 /**
- * 七条候选：前六条与面板上的六个功能一一对应（顺序也一致），
- * 第七条 `/review` 是额外的审查入口，没有对应的面板按钮——面板是常用功能的
- * 快捷入口，不必穷举全部命令。封面印的七个中文菜单名就是这里的 name。
+ * 八条候选，与面板上的八个按钮一一对应（顺序也一致）。
+ * `MODES` 是从这里派生的（modes.ts），所以加一条候选就会同时进菜单和面板，
+ * 不需要另造一份数据。封面印的八个中文菜单名就是这里的 name。
  *
  * 名字刻意短：它在输入框里等同"标签"，长了就退化成句子。
  */
@@ -52,6 +52,7 @@ export const DOCTOR_CANDIDATES: readonly DoctorCandidate[] = [
   { name: '诊断', label: '诊断一个', token: 'why', description: '查一个技能为什么没被模型选中，给出具体原因和改法' },
   { name: '会诊', label: '插件会诊', token: 'clash', description: '检查有没有插件改坏了技能目录配置，导致技能突然消失' },
   { name: '审查', label: '审查插件', token: 'review', description: '列出新装插件的静态风险提示与已装插件冲突' },
+  { name: '安装', label: '门禁安装', token: 'install', description: '审过 tarball 才装，命中高危就拒绝' },
 ]
 
 /** 引用源的注册名（`(trigger, name)` 唯一，撞了会抛）。 */

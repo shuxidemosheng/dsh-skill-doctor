@@ -272,6 +272,16 @@ describe('plainCheckup directory budget', () => {
   })
 })
 
+describe('/install command', () => {
+  it('gives a copyable hint without touching the network when the argument is empty', async () => {
+    const env = createFakeCtx([])
+    const specs = buildCommands(env.ctx as never, resolveConfig(undefined))
+    const text = await specs.find(spec => spec.name === 'install')!.run('  ')
+    expect(text).toContain('/install')
+    expect(text).toContain('registry')
+  })
+})
+
 describe('/review command', () => {
   /** 用临时 DSH_HOME 隔离：/review 会跑 scanProfile，不能读真实 profile。 */
   async function withTempHome<T>(fn: () => Promise<T>): Promise<T> {

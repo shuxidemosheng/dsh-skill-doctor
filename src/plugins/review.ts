@@ -70,7 +70,7 @@ export interface ReviewResult {
 }
 
 /** 只把能当文本读的文件纳入扫描，避免把二进制喂给正则。 */
-const TEXT_EXT = new Set([
+export const TEXT_EXT = new Set([
   '.js', '.mjs', '.cjs', '.ts', '.mts', '.cts', '.jsx', '.tsx',
   '.json', '.yml', '.yaml', '.md', '.txt', '.sh', '.bash', '.ps1', '.py',
 ])
@@ -80,7 +80,7 @@ const MAX_FILE_BYTES = 2 * 1024 * 1024
 const MAX_TOTAL_BYTES = 10 * 1024 * 1024
 const MAX_FILES = 500
 
-interface TextFile {
+export interface TextFile {
   /** 包内相对路径，统一用正斜杠。 */
   readonly path: string
   readonly text: string
@@ -228,35 +228,25 @@ function manifestFields(manifest: Record<string, unknown>): {
  * @param report - 可选的 `scanProfile` 结果；给了才能做 RV005/RV006 与冲突聚焦。
  * @param pkgName - 可选的包名；不给就用目录名。
  */
-export async function reviewBundle(
-  dir: string,
-  report?: PluginReport,
-  pkgName?: string,
-): Promise<ReviewResult> {
-  const pkg = pkgName ?? basename(dir)
+/**
+ * RV001–RV012 的规则判定本体，输入与 IO 完全解耦。
+ *
+ * 为什么单独抽出来：安装门禁需要审「还没落盘」的 tarball 内容，而
+ * `reviewBundle` 只认磁盘目录。把判定做成纯函数后，两条路径读同一套规则、
+ * 同一套 id，不会出现「装前说没问题、装后一堆提示」的口径分裂。
+ * 这里仍然是 info/warn 两档；门禁的 error 级规则在 gate.ts 里另立一组。
+ */
+export function evaluateRiskHints(input: {
+  readonly files: readonly TextFile[]
+  readonly manifest: Record<string, unknown>
+  readonly patchText: string
+  readonly report?: PluginReport
+  readonly pkg: string
+  readonly oversized: boolean
+}): RiskHint[] {
+  const { files, manifest, patchText, report, pkg, oversized } = input
   const hints: RiskHint[] = []
   const seen = new Set<RiskRuleId>()
-  const notes: string[] = []
-
-  let manifest: Record<string, unknown> = {}
-  try {
-    const parsed: unknown = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      manifest = parsed as Record<string, unknown>
-    }
-  } catch (error) {
-    notes.push(`读不到 package.json：${reasonOf(error)}`)
-  }
-
-  let patchText = ''
-  try {
-    patchText = await readFile(join(dir, 'cordis.patch.yml'), 'utf8')
-  } catch {
-    notes.push('没有读到 cordis.patch.yml（不是所有插件都带 patch，这本身不是问题）。')
-  }
-
-  const { files, notes: fileNotes, oversized } = await collectFiles(dir)
-  notes.push(...fileNotes)
   const { scripts, dependencies } = manifestFields(manifest)
   const scriptValues = Object.values(scripts).join('\n')
 
@@ -399,6 +389,38 @@ export async function reviewBundle(
       where: 'cordis.patch.yml',
     })
   }
+
+  return hints
+}
+
+export async function reviewBundle(
+  dir: string,
+  report?: PluginReport,
+  pkgName?: string,
+): Promise<ReviewResult> {
+  const pkg = pkgName ?? basename(dir)
+  const notes: string[] = []
+
+  let manifest: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(await readFile(join(dir, 'package.json'), 'utf8'))
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      manifest = parsed as Record<string, unknown>
+    }
+  } catch (error) {
+    notes.push(`读不到 package.json：${reasonOf(error)}`)
+  }
+
+  let patchText = ''
+  try {
+    patchText = await readFile(join(dir, 'cordis.patch.yml'), 'utf8')
+  } catch {
+    notes.push('没有读到 cordis.patch.yml（不是所有插件都带 patch，这本身不是问题）。')
+  }
+
+  const { files, notes: fileNotes, oversized } = await collectFiles(dir)
+  notes.push(...fileNotes)
+  const hints = evaluateRiskHints({ files, manifest, patchText, report, pkg, oversized })
 
   const focus = report === undefined ? [] : focusConflicts(report, pkg)
   if (report === undefined) notes.push('没有传入当前 profile 的插件体检结果，冲突聚焦与 RV005 已跳过。')

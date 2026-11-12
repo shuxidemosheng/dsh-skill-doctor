@@ -11,9 +11,9 @@ import { MODES } from '../src/modes'
 describe('doctor candidates', () => {
   it('covers every panel button exactly once', () => {
     // MODES 由 DOCTOR_CANDIDATES 派生（modes.ts），所以候选与面板按钮天然
-    // 一一对应；新增第七条 /review 会同时进菜单和面板，不需要另造一份数据。
+    // 一一对应；新增第八条 /install 会同时进菜单和面板，不需要另造一份数据。
     expect(DOCTOR_CANDIDATES).toHaveLength(MODES.length)
-    expect(DOCTOR_CANDIDATES[DOCTOR_CANDIDATES.length - 1]!.token).toBe('review')
+    expect(DOCTOR_CANDIDATES[DOCTOR_CANDIDATES.length - 1]!.token).toBe('install')
     for (const [index, mode] of MODES.entries()) {
       expect(mode.id).toBe(DOCTOR_CANDIDATES[index]!.name)
       expect(mode.command).toBe(DOCTOR_CANDIDATES[index]!.token)

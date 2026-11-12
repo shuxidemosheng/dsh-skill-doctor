@@ -1,5 +1,5 @@
 /**
- * 宿主侧斜杠命令：`/doctor`、`/scope`、`/followup`、`/rewrite`、`/why`、`/clash`、`/review`。
+ * 宿主侧斜杠命令：`/doctor`、`/scope`、`/followup`、`/rewrite`、`/why`、`/clash`、`/review`、`/install`。
  *
  * 为什么需要它：客户端面板只能往输入框塞纯文本，做不出那种"蓝色命令 chip"——
  * 那需要 `conversation` 服务（第三方拿不到，硬声明会让整块面板不加载）。
@@ -30,6 +30,7 @@ import { profileNameOf } from './profile-name.js'
 import { collectRuntimeSkills, collectRuntimeSkillsWithWinners, collectWinners } from './runtime.js'
 import { scanRoots } from './scanner/fs-scan.js'
 import { profileDirOf, scanProfile } from './plugins/scan.js'
+import { installAfterGate } from './plugins/gate.js'
 import {
   getLastReview, reviewBundle, reviewPlainLines, setLastReview,
 } from './plugins/review.js'
@@ -195,10 +196,11 @@ const COMMAND_META = {
   why: { description: '查某个技能为什么没被选中', hint: '<技能名>' },
   clash: { description: '查插件有没有改坏技能配置', hint: '[profile 名]' },
   review: { description: '审查新装插件的静态风险与冲突', hint: '[包名，留空=最近一次]' },
+  install: { description: '审过 tarball 才安装 registry 插件', hint: '<包名或精确版本>' },
 } as const
 
 /**
- * 组装七条命令。
+ * 组装八条命令。
  *
  * 每次执行都重新采集技能（不缓存）：技能文件随时会被编辑，
  * 命令输出的价值就在于"此刻"的状态。
@@ -354,6 +356,19 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
         return reviewPlainLines(result).join('\n')
       },
     },
+    {
+      name: 'install',
+      ...COMMAND_META.install,
+      run: async input => {
+        const spec = input.trim()
+        if (spec.length === 0) {
+          return '给一个 registry 包名或精确版本，例如 /install dsh-ops@0.5.2；第一版不支持 git / URL / 本地路径。'
+        }
+        // installAfterGate 内部先审 tarball，通过后才软探测 pluginManager 并安装；
+        // 命中高危或取包失败都不会走到安装那一步。
+        return (await installAfterGate(ctx, spec)).join('\n')
+      },
+    },
   ]
 }
 
@@ -410,4 +425,4 @@ export function registerCommands(ctx: Context, config: ResolvedConfig): void {
 }
 
 /** 供测试用：命令名清单。 */
-export const COMMAND_NAMES = ['doctor', 'scope', 'followup', 'rewrite', 'why', 'clash', 'review'] as const
+export const COMMAND_NAMES = ['doctor', 'scope', 'followup', 'rewrite', 'why', 'clash', 'review', 'install'] as const
