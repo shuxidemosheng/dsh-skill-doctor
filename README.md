@@ -40,7 +40,7 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@0.18.0`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@0.18.1`。
 
 0.14.0 起插件页会显示**三个组件行**（体检 / 安装门禁 / 外部技能挂载），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
@@ -708,7 +708,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 399 个用例
+npm test          # 400 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

@@ -28,9 +28,23 @@ import { registerInstallGate } from './plugins/gate.js'
 export const name = 'skill-doctor-gate'
 
 /**
- * 不声明 inject：门禁只用 `ctx.get` / `ctx.effect` / `ctx.logger`，
- * 连 `pluginManager` 也是软探测。声明任何名字都会让缺服务的环境下整行失效。
+ * 依赖 `pluginManager` 服务。
+ *
+ * **这一条不能省。** 没有 inject 声明时，fiber 不等任何依赖，apply 会在
+ * `plugin-manager` 注册之前就跑完——它自身 `inject = ['loader', 'profileContext']`，
+ * 注册得比绝大多数插件晚。此时 `ctx.get('pluginManager', false)` 返回 undefined
+ * （cordis 的 get 在 store 里没有该 key 时就是 undefined），门禁走静默降级分支，
+ * 结果是插件页安装完全不受约束，而且日志里只有一行 info，看起来像「已启用」。
+ *
+ * 0.18.0 就是这个状态：代码、patch、组件行都对，但门禁在真实环境里从未生效。
+ * 排查记录：apply 时 `manager typeof=undefined`，加上 inject 后变成 `object`
+ * 且 `wrapped installBundle ok` 紧接着出现。
+ *
+ * 声明 inject 后 cordis 会等服务就绪再 apply，服务卸载时也会正确 dispose，
+ * 恰好是门禁想要的语义。代价是老版本 dsh 若没有该服务名，这一行不加载——
+ * 但门禁本来就是独立组件行，失效只影响它自己，不牵连体检那两行。
  */
+export const inject = ['pluginManager'] as const
 
 /**
  * @param ctx - Cordis 上下文。没有 config —— 组件开关本身就是唯一的开关。

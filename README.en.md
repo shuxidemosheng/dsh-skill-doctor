@@ -40,7 +40,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@0.18.0`.
+That installs the latest version; pin it by appending a version, e.g. `@0.18.1`.
 
 From 0.14.0 the plugin page shows **three component rows** (checkup / install gate / external skill sources), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
@@ -603,7 +603,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 399 tests
+npm test          # 400 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

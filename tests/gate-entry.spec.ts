@@ -6,7 +6,7 @@
  * 绝不抛错」——一行组件挂掉不该连累另外两行。
  */
 import { describe, expect, it } from 'vitest'
-import { apply, name } from '../src/gate-entry'
+import { apply, inject, name } from '../src/gate-entry'
 
 /** 造一个只带 logger / get / effect 的最小 ctx。 */
 function fakeCtx(manager?: unknown) {
@@ -28,6 +28,13 @@ describe('gate entry row', () => {
   it('keeps the patch id stable so the component row stays toggleable', () => {
     // patch 里的 id 与这里的 name 必须一致，否则插件页那一行的开关会作用在空处。
     expect(name).toBe('skill-doctor-gate')
+  })
+
+  it('declares pluginManager so apply runs only after the service exists', () => {
+    // 0.18.0 的真实缺陷：没有这条声明时 fiber 不等依赖，apply 跑在
+    // plugin-manager 注册之前，ctx.get('pluginManager') 拿到 undefined，
+    // 门禁静默降级成「不可用」——组件行和 patch 全都对，就是不起作用。
+    expect(inject).toContain('pluginManager')
   })
 
   it('wraps installBundle when the service is present', () => {
