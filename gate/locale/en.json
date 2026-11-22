@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Install gate",
+    "title": "skill-doctor-gate",
     "description": "Inspects the registry tarball before an install and refuses on GT001-GT003. Covers plugin-page, dshmarket and model-tool installs; switch the row off to let them through."
   }
 }

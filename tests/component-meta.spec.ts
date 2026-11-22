@@ -46,12 +46,21 @@ describe('component display metadata', () => {
     }
   })
 
-  it('中文标题与英文标题不同，说明真的本地化了', () => {
+  it('标题就是组件行 id，去掉包名前缀', () => {
     for (const sub of SUBPATHS) {
-      const zh = readMeta(sub, 'zh').title
-      const en = readMeta(sub, 'en').title
+      // 标题取短名而不是「外部技能挂载」这类中文词：dsh 在 title === rowId 时
+      // 不会重复渲染 id，于是只剩 moduleName 一行小字，整体结构与第一个组件一致。
+      expect(readMeta(sub, 'zh').title).toBe(`skill-doctor-${sub}`)
+      expect(readMeta(sub, 'en').title).toBe(`skill-doctor-${sub}`)
+    }
+  })
+
+  it('描述是本地化的，中英不同', () => {
+    for (const sub of SUBPATHS) {
+      const zh = readMeta(sub, 'zh').description
+      const en = readMeta(sub, 'en').description
       expect(zh).not.toBe(en)
-      // 中文标题里应当有汉字，防止复制英文时漏改。
+      // 中文描述里应当有汉字，防止复制英文时漏改。
       expect(/[\u4e00-\u9fa5]/.test(zh)).toBe(true)
     }
   })

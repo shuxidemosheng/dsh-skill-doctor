@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Review archive",
+    "title": "skill-doctor-audit",
     "description": "Keeps every verdict locally, trimmed at 20 MB / 5000 records / 180 days. Query with /doctor audit; recording never affects the gate verdict."
   }
 }

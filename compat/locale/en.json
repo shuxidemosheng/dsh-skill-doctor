@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "External skill sources",
+    "title": "skill-doctor-compat",
     "description": "Mounts Claude Code / Codex / ZCode skill directories into the dsh skill view. Read-only, no file watching: restart after editing a SKILL.md."
   }
 }
