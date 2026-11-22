@@ -63,7 +63,7 @@ The checkup is read-only: it inspects skill files and plugin runtime state, then
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@1.4.0`.
+That installs the latest version; pin it by appending a version, e.g. `@1.4.1`.
 
 From 0.14.0 the plugin page shows **four component rows** (checkup / external skill sources / install gate / review archive), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
