@@ -41,7 +41,7 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.1.0`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.2.0`。
 
 0.14.0 起插件页会显示**四个组件行**（体检 / 外部技能挂载 / 安装门禁 / 审查归档），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
@@ -421,7 +421,17 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 
 **判定规则**：GT001 安装期脚本把远程下载内容直接执行、GT002 patch 覆盖官方 scope 条目或用 `disabled: true` 静默关掉别人的插件、GT003 运行时依赖指向非 registry 的远端地址。这三条是 `error` 级，命中即拒；RV001–RV012 仍是 `info`/`warn` 提示，只展示、不参与拒绝——正常包几乎必然命中 `eval`、`postinstall` 之类，拿它们阻断会挡掉大量正常插件。
 
-**退出码**：`--gate` 通过 `0`、命中高危 `1`、没审成 `2`。取不到包、解析失败、网络错误一律 `decision: 'error'`，**fail closed，绝不当成通过**。
+**影子规则（GT004–GT006，只观察不阻断）**：这三条命中会写进报告与归档，但**不改变结论、不影响退出码**。先跑一段时间收集真实误报率，再决定哪条升为 `error`：
+
+| 编号 | 判断 | 为什么先不阻断 |
+|---|---|---|
+| GT004 | 本版发布者与上一版不同（读完整 packument 的 `_npmUser`） | 换 CI、转移维护权都会触发，正常操作也常见 |
+| GT005 | 安装脚本里出现 `node -e` / `python -c` 这类动态求值 | 是 GT001 的盲区（能远程执行但绕过 `curl\|sh` 匹配），但少数构建脚本确实这么写 |
+| GT006 | 主版本号跨两级以上（如 2.x → 9.x） | 被劫持账号常用大跳版，但大重构也会这样 |
+
+GT004 需要额外请求一次完整 packument（corgi 格式不含 `_npmUser`），体积上限 1.5 MB，超限或失败就跳过并记一条 note——不会让安装变慢，也不会因此拒绝。
+
+**退出码**：`--gate` 通过 `0`、命中高危 `1`、没审成 `2`。取不到包、解析失败、网络错误一律 `decision: 'error'`，**fail closed，绝不当成通过**。影子规则命中不影响退出码——它没有资格让 CI 变红。
 
 **信任清单（按包放行）**
 
@@ -756,7 +766,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 428 个用例
+npm test          # 438 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

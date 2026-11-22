@@ -8,6 +8,7 @@ import { gzipSync } from 'node:zlib'
 import { describe, expect, it, vi } from 'vitest'
 import {
   evaluateGateRules,
+  evaluateShadowRules,
   filesFromTarball,
   gateJson,
   gateMarkdownLines,
@@ -388,6 +389,169 @@ describe('trusted override', () => {
         trusted: ['EVIL'],
       })
       expect(result.trustedOverride).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('evaluateShadowRules', () => {
+  const base = { version: '1.0.0', versions: ['1.0.0'] }
+
+  it('flags dynamic eval inside install scripts (GT005)', () => {
+    const findings = evaluateShadowRules({
+      ...base,
+      manifest: { scripts: { postinstall: `node -e "require('https').get('http://x')"` } },
+    })
+    expect(findings.map(finding => finding.id)).toContain('GT005')
+    // 影子规则只产 warn，绝不产 error —— 这是它「不阻断」的实现前提。
+    expect(findings.every(finding => finding.severity === 'warn')).toBe(true)
+  })
+
+  it('ignores dynamic eval outside install scripts', () => {
+    const findings = evaluateShadowRules({
+      ...base,
+      manifest: { scripts: { test: 'node -e "1"', build: 'python -c "print(1)"' } },
+    })
+    expect(findings).toHaveLength(0)
+  })
+
+  it('flags a two-major jump from the highest lower version (GT006)', () => {
+    const findings = evaluateShadowRules({
+      version: '9.0.0',
+      versions: ['0.9.0', '1.0.0', '2.1.0', '9.0.0'],
+      manifest: {},
+    })
+    const hit = findings.find(finding => finding.id === 'GT006')
+    expect(hit).toBeDefined()
+    // 参照点是「此前最高的同主版本线」，2.1.0 而不是 0.9.0。
+    expect(hit!.detail).toContain('2.1.0')
+  })
+
+  it('does not flag a normal increment', () => {
+    const findings = evaluateShadowRules({
+      version: '1.2.0',
+      versions: ['1.0.0', '1.1.0', '1.2.0'],
+      manifest: {},
+    })
+    expect(findings.map(finding => finding.id)).not.toContain('GT006')
+  })
+
+  it('flags a publisher change only when history is available (GT004)', () => {
+    const withHistory = evaluateShadowRules({
+      version: '1.1.0',
+      versions: ['1.0.0', '1.1.0'],
+      manifest: {},
+      publishedBy: { '1.0.0': 'alice', '1.1.0': 'bob' },
+    })
+    expect(withHistory.map(finding => finding.id)).toContain('GT004')
+
+    const withoutHistory = evaluateShadowRules({
+      version: '1.1.0',
+      versions: ['1.0.0', '1.1.0'],
+      manifest: {},
+    })
+    expect(withoutHistory.map(finding => finding.id)).not.toContain('GT004')
+  })
+
+  it('stays quiet when the publisher is unchanged', () => {
+    const findings = evaluateShadowRules({
+      version: '1.1.0',
+      versions: ['1.0.0', '1.1.0'],
+      manifest: {},
+      publishedBy: { '1.0.0': 'alice', '1.1.0': 'alice' },
+    })
+    expect(findings.map(finding => finding.id)).not.toContain('GT004')
+  })
+})
+
+describe('shadow findings never change the verdict', () => {
+  /** 只带影子命中的结果。 */
+  const shadowOnly = {
+    spec: 'demo@9.0.0', name: 'demo', version: '9.0.0',
+    installSpec: 'demo@9.0.0', tarball: 'https://r/demo.tgz', registry: 'https://r',
+    decision: 'pass' as const,
+    findings: [{
+      id: 'GT006' as const, severity: 'warn' as const,
+      title: '主版本号跳跃较大', detail: '细节', where: 'package.json',
+    }],
+    review: { pkg: 'demo', dir: '<tarball>', hints: [], focus: [], notes: [] },
+    notes: [],
+  }
+
+  it('renders shadow hits in their own section without claiming a block', () => {
+    const text = gatePlainLines(shadowOnly).join('\n')
+    expect(text).toContain('影子规则（只观察，不阻断）')
+    expect(text).toContain('GT006')
+    // 结论仍然是通过：影子项没有资格出现在「高危规则」段。
+    expect(text).toContain('通过，可以安装')
+  })
+
+  it('exposes blocker and shadow counts separately in json', () => {
+    const payload = gateJson(shadowOnly)
+    expect(payload.blockerCount).toBe(0)
+    expect(payload.shadowCount).toBe(1)
+    expect(payload.decision).toBe('pass')
+  })
+})
+
+describe('shadow rules in the full gate path', () => {
+  /** 一个只在安装脚本里做动态求值的包：应命中 GT005（影子），不该被拒绝。 */
+  const tarball = makeTarGz({
+    'package/package.json': JSON.stringify({
+      name: 'shadowy',
+      version: '1.0.0',
+      scripts: { postinstall: 'node -e "require(\'fs\').writeFileSync(\'/tmp/x\',\'1\')"' },
+    }),
+    'package/index.js': 'module.exports = 1\n',
+  })
+
+  /** corgi 与完整 packument 用 accept 头区分，返回不同形状。 */
+  function stubWith(opts: { full?: Record<string, unknown> | 'fail' } = {}): void {
+    vi.stubGlobal('fetch', async (input: unknown, init?: { headers?: Record<string, string> }) => {
+      const url = String(input)
+      if (url.endsWith('.tgz')) return new Response(tarball, { status: 200 })
+      const accept = init?.headers?.accept ?? ''
+      if (accept === 'application/json') {
+        if (opts.full === 'fail') return new Response('nope', { status: 500 })
+        return new Response(JSON.stringify(opts.full ?? {
+          time: { created: '2026-01-01T00:00:00Z', modified: '2026-01-02T00:00:00Z', '1.0.0': '2026-01-01T00:00:00Z' },
+          versions: { '1.0.0': { _npmUser: { name: 'alice' } } },
+        }), { status: 200 })
+      }
+      return new Response(JSON.stringify({
+        versions: { '1.0.0': { dist: { tarball: 'https://registry.example/shadowy-1.0.0.tgz' } } },
+        'dist-tags': { latest: '1.0.0' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+  }
+
+  it('reports the shadow hit but still passes the install', async () => {
+    stubWith()
+    try {
+      const result = await gateSpec('shadowy', { registry: 'https://registry.example/' })
+      // 核心断言：影子命中不进 decision。
+      expect(result.decision).toBe('pass')
+      expect(result.trustedOverride).toBeUndefined()
+      expect(result.findings.map(finding => finding.id)).toContain('GT005')
+      expect(result.findings.every(finding => finding.severity === 'warn')).toBe(true)
+
+      const payload = gateJson(result)
+      expect(payload.blockerCount).toBe(0)
+      expect(payload.shadowCount).toBe(1)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('skips GT004 with a note when the full packument is unavailable', async () => {
+    stubWith({ full: 'fail' })
+    try {
+      const result = await gateSpec('shadowy', { registry: 'https://registry.example/' })
+      expect(result.decision).toBe('pass')
+      expect(result.findings.map(finding => finding.id)).not.toContain('GT004')
+      // 跳过要留痕：否则用户会以为「发布者没变」，而实际是没查到。
+      expect(result.notes.join('\n')).toContain('GT004')
     } finally {
       vi.unstubAllGlobals()
     }

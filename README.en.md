@@ -41,7 +41,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@1.1.0`.
+That installs the latest version; pin it by appending a version, e.g. `@1.2.0`.
 
 From 0.14.0 the plugin page shows **four component rows** (checkup / external skill sources / install gate / review archive), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
@@ -333,7 +333,17 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 
 **Rules**: GT001 install scripts that pipe downloaded content into a shell, GT002 patches that overwrite official-scope entries or silently disable another plugin with `disabled: true`, GT003 runtime dependencies pointing at non-registry remote sources. These are `error`-level and refuse the install. RV001-RV012 remain `info`/`warn` hints shown for context only — normal bundles almost always contain `eval` or `postinstall`, so using them to block would reject legitimate packages.
 
-**Exit codes**: `--gate` returns `0` on pass, `1` on a high-risk hit, `2` when the inspection could not finish. Any fetch, parse or network failure yields `decision: 'error'` — **fail closed, never treated as a pass**.
+**Shadow rules (GT004-GT006, observe only)**: a hit is written to the report and the archive but **does not change the verdict and does not affect the exit code**. They run in observation mode first so real false-positive rates can be measured before any of them is promoted to `error`:
+
+| Rule | What it looks at | Why it does not block yet |
+|---|---|---|
+| GT004 | current publisher differs from the previous version (reads `_npmUser` from the full packument) | switching CI or transferring maintenance triggers it too |
+| GT005 | install scripts using `node -e` / `python -c` dynamic evaluation | closes a GT001 blind spot (remote execution without `curl\|sh`), but a few build scripts legitimately do this |
+| GT006 | major version jumping two or more levels (2.x to 9.x) | typical of hijacked accounts, but large rewrites look the same |
+
+GT004 needs one extra request for the full packument (corgi has no `_npmUser`), capped at 1.5 MB; when unavailable the rule is skipped and a note is recorded — installs never get slower or refused because of it.
+
+**Exit codes**: `--gate` returns `0` on pass, `1` on a high-risk hit, `2` when the inspection could not finish. Any fetch, parse or network failure yields `decision: 'error'` — **fail closed, never treated as a pass**. Shadow-rule hits do not affect the exit code; they have no business turning CI red.
 
 **Trust list (per-package override)**
 
@@ -651,7 +661,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 428 tests
+npm test          # 438 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

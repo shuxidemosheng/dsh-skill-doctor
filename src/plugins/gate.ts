@@ -45,12 +45,18 @@ import { loadTrust, trustedNames } from '../trust.js'
 import type { AuditSource } from '../audit.js'
 
 /** 门禁规则的稳定 id。与 RV* 分开编号，避免「提示」和「拒绝」混成一件事。 */
-export type GateRuleId = 'GT001' | 'GT002' | 'GT003'
+export type GateRuleId = 'GT001' | 'GT002' | 'GT003' | 'GT004' | 'GT005' | 'GT006'
 
 export interface GateFinding {
   readonly id: GateRuleId
-  /** 门禁规则只有一档：命中即拒绝。这里写死 'error' 是为了输出时不用再判断。 */
-  readonly severity: 'error'
+  /**
+   * `error` = 命中即拒绝；`warn` = **影子规则**，只观察不阻断。
+   *
+   * GT004–GT006 是 1.1.0 新增的观察项，第一版先跑影子模式：结构化的证据
+   * （发布者变更、脚本动态求值、版本跳跃）都会写进报告与归档，但不影响
+   * decision。跑一段时间看真实误报率，再决定哪条升为 `error`。
+   */
+  readonly severity: 'error' | 'warn'
   readonly title: string
   readonly detail: string
   /** 包内相对路径，绝不含本机绝对路径。 */
@@ -319,6 +325,7 @@ async function resolveMetadata(
   tarball: string
   installSpec: string
   registry: string
+  versions: string[]
 }> {
   const base = registryBase(registryOverride)
   // scoped 包 `@scope/name` 的斜杠必须编码，否则 registry 会当成路径分隔符。
@@ -343,7 +350,78 @@ async function resolveMetadata(
   const dist = versions[exact]!.dist
   const tarball = (dist as { tarball?: unknown } | null)?.tarball
   if (typeof tarball !== 'string' || !/^https?:\/\//.test(tarball)) throw codedError('no-tarball')
-  return { version: exact, tarball, installSpec: `${spec.name}@${exact}`, registry: base }
+  return {
+    version: exact,
+    tarball,
+    installSpec: `${spec.name}@${exact}`,
+    registry: base,
+    // 影子规则（GT006 版本跳跃）需要全部已发布版本；corgi 格式就带这个，不额外请求。
+    versions: Object.keys(versions),
+  }
+}
+
+/** 完整 packument 的体积上限。超过就跳过 GT004 —— 观测项不值得让安装变慢。 */
+const FULL_META_BUDGET_BYTES = 1536 * 1024
+
+/**
+ * 取「版本 → 发布者」的历史，只服务 GT004。
+ *
+ * 为什么要单独请求：`resolveMetadata` 用的是 corgi 格式
+ * （`application/vnd.npm.install-v1+json`），它只有 versions/dist-tags/dist，
+ * **不含 `_npmUser`、`time`、`maintainers`**。发布者信息只能从完整 packument 拿，
+ * 而完整格式大得多（99 个版本约 470 KB），所以这里单独一次请求并设上限。
+ *
+ * 失败一律返回 undefined：GT004 是观测项，拿不到就不报，不能影响安装。
+ */
+async function fetchPublisherHistory(
+  name: string,
+  base: string,
+): Promise<Record<string, string> | undefined> {
+  try {
+    const encoded = name.startsWith('@') ? name.replace('/', '%2f') : name
+    const response = await fetch(`${base}/${encoded}`, {
+      signal: AbortSignal.timeout(15_000),
+      headers: { accept: 'application/json' },
+    })
+    if (!response.ok) return undefined
+    const declared = Number(response.headers.get('content-length') ?? '0')
+    if (declared > FULL_META_BUDGET_BYTES) return undefined
+    const text = await response.text()
+    if (Buffer.byteLength(text, 'utf8') > FULL_META_BUDGET_BYTES) return undefined
+
+    const doc: unknown = JSON.parse(text)
+    if (doc === null || typeof doc !== 'object' || Array.isArray(doc)) return undefined
+    const record = doc as {
+      time?: Record<string, unknown>
+      versions?: Record<string, { _npmUser?: { name?: unknown } }>
+    }
+    const time = record.time ?? {}
+    // time 里除 created / modified 之外都是版本号；按发布时间排成序列，
+    // 供 GT004 找「上一版」时使用（对象字面量的插入顺序会被保留）。
+    const order = Object.keys(time)
+      .filter(key => key !== 'created' && key !== 'modified')
+      .filter(key => typeof time[key] === 'string')
+      .sort((a, b) => Date.parse(time[a] as string) - Date.parse(time[b] as string))
+
+    const byVersion: Record<string, string> = {}
+    for (const [version, meta] of Object.entries(record.versions ?? {})) {
+      const user = meta?._npmUser?.name
+      if (typeof user === 'string' && user.length > 0) byVersion[version] = user
+    }
+
+    const ordered: Record<string, string> = {}
+    for (const version of order) {
+      const user = byVersion[version]
+      if (user !== undefined) ordered[version] = user
+    }
+    // 发布时间表里没出现的版本按原顺序补在后面，避免遗漏。
+    for (const [version, user] of Object.entries(byVersion)) {
+      if (ordered[version] === undefined) ordered[version] = user
+    }
+    return Object.keys(ordered).length === 0 ? undefined : ordered
+  } catch {
+    return undefined
+  }
 }
 
 /** 下载 tarball；带超时和体积上限，避免一个恶意包把内存吃满。 */
@@ -461,6 +539,108 @@ export function evaluateGateRules(input: {
   return findings
 }
 
+/**
+ * 影子规则：只产 `severity: 'warn'` 的命中项，不影响是否安装。
+ *
+ * 三条都基于**结构化证据**，不是「看起来可疑」：
+ * - GT004 发布者变更：需要完整 packument 的 `_npmUser`（corgi 格式没有）
+ * - GT005 安装脚本动态求值：`node -e` / `python -c` 这类，GT001 的盲区
+ * - GT006 主版本跳跃：主版本号跨两级以上，恶意发布常见，但正常大重构也偶有
+ *
+ * 为什么先影子：这三条都有合理误报场景（CI 与人工混发、大版本重构），
+ * 直接 `error` 会重演「挡掉大量正常插件」的老问题。
+ */
+export function evaluateShadowRules(input: {
+  readonly manifest: Record<string, unknown>
+  readonly version: string
+  /** 全部已发布版本（corgi 的 `versions` 键就够）。 */
+  readonly versions: readonly string[]
+  /** 版本 → 发布者名；只有拿到完整 packument 时才有。 */
+  readonly publishedBy?: Readonly<Record<string, string>>
+}): GateFinding[] {
+  const findings: GateFinding[] = []
+  const { manifest, version, versions, publishedBy } = input
+
+  const asStrings = (value: unknown): Record<string, string> => {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) return {}
+    const out: Record<string, string> = {}
+    for (const [key, item] of Object.entries(value)) {
+      if (typeof item === 'string') out[key] = item
+    }
+    return out
+  }
+
+  // ---- GT005：安装脚本里的动态求值 -------------------------------------------
+  // GT001 只认 curl|wget 管道进 shell；`node -e "require('https')..."` 能办同样的事
+  // 却完全绕过它。正常构建脚本极少在安装期用动态求值。
+  const scripts = asStrings(manifest.scripts)
+  const installScripts = Object.entries(scripts)
+    .filter(([name]) => /^(?:pre|post)?install$|^prepare$/.test(name))
+    .map(([, value]) => value)
+    .join('\n')
+  const dynamicEval = /\b(?:node|python[0-9.]*)\s+(?:-e|--eval|-c)\b/
+  if (dynamicEval.test(installScripts)) {
+    findings.push({
+      id: 'GT005', severity: 'warn',
+      title: '安装脚本里出现动态求值',
+      detail: 'preinstall/install/postinstall/prepare 里有 node -e / python -c 这类动态求值。它和 curl|sh 能达到同样效果，但不会被 GT001 匹配；正常构建脚本很少需要。',
+      where: 'package.json',
+    })
+  }
+
+  // ---- GT006：主版本跳跃 -----------------------------------------------------
+  // 只比「上一个已发布版本」与本次目标版本的主版本号，跨两级以上才提示。
+  // 用版本列表而不是发布时间：corgi 格式没有 time，而版本序列足够判断跳跃。
+  const parseMajor = (v: string): number | undefined => {
+    const match = /^(\d+)\./.exec(v)
+    return match === null ? undefined : Number(match[1])
+  }
+  const targetMajor = parseMajor(version)
+  // 取「此前最高的同主版本线」：先比 major、再比 minor、最后比 patch，全部降序。
+  // 按 major 升序取第一个会拿到最小的版本，参照点就错了。
+  const partsOf = (value: string): number[] =>
+    value.split('.').map(part => {
+      const n = Number.parseInt(part, 10)
+      return Number.isFinite(n) ? n : 0
+    })
+  const previous = versions
+    .filter(candidate => candidate !== version && parseMajor(candidate) !== undefined)
+    .map(candidate => ({ raw: candidate, parts: partsOf(candidate) }))
+    .filter(candidate => candidate.parts[0]! <= (targetMajor ?? Number.NaN))
+    .sort((a, b) => (b.parts[0]! - a.parts[0]!)
+      || ((b.parts[1] ?? 0) - (a.parts[1] ?? 0))
+      || ((b.parts[2] ?? 0) - (a.parts[2] ?? 0)))[0]
+  if (targetMajor !== undefined && previous !== undefined && targetMajor - previous.parts[0]! >= 2) {
+    findings.push({
+      id: 'GT006', severity: 'warn',
+      title: '主版本号跳跃较大',
+      detail: `本次要装 ${version}，而此前最高的同主版本线是 ${previous.raw}。被劫持的账号常用大跳版覆盖语义化版本解析；大重构也会这样，所以只提示不阻断。`,
+      where: 'package.json',
+    })
+  }
+
+  // ---- GT004：发布者变更 -----------------------------------------------------
+  // 需要完整 packument 的 `_npmUser`；corgi 格式没有这个字段，拿不到就跳过。
+  if (publishedBy !== undefined) {
+    const currentBy = publishedBy[version]
+    if (currentBy !== undefined) {
+      // 找「上一个版本」的发布者：按时间序的最后一个不同版本。
+      const others = Object.entries(publishedBy).filter(([v]) => v !== version)
+      const lastOther = others[others.length - 1]
+      if (lastOther !== undefined && lastOther[1] !== currentBy) {
+        findings.push({
+          id: 'GT004', severity: 'warn',
+          title: '发布者与上一版不同',
+          detail: `本版由 ${currentBy} 发布，上一版是 ${lastOther[1]}（${lastOther[0]}）。账号被盗后推恶意版是典型手法，但换 CI 或转移维护权也会这样，所以只提示。`,
+          where: 'package.json',
+        })
+      }
+    }
+  }
+
+  return findings
+}
+
 /** 构造一个「无冲突聚焦」的 RV 报告；装前包还没进 profile，focus 必然为空。 */
 function buildReview(
   name: string,
@@ -539,7 +719,7 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
     return empty('invalid-spec：第一版只支持 registry 包名（可带版本），不支持 git / URL / 本地路径 / .tgz。')
   }
 
-  let resolved: { version: string; tarball: string; installSpec: string; registry: string }
+  let resolved: Awaited<ReturnType<typeof resolveMetadata>>
   try {
     resolved = await resolveMetadata(parsed, options?.registry)
   } catch (error) {
@@ -578,10 +758,26 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
 
   const patchText = textOf(files, 'cordis.patch.yml') ?? ''
   const findings = evaluateGateRules({ manifest, patchText, files })
-  const review = buildReview(parsed.name, files, manifest, patchText, oversized, notes)
 
+  // 影子规则（GT004–GT006）：只产 warn，不影响 decision。
+  const publishedBy = await fetchPublisherHistory(parsed.name, resolved.registry)
+  const metaNotes = publishedBy === undefined
+    ? ['未能获取完整元数据（体积超限或请求失败），GT004 发布者变更为本次跳过。']
+    : []
+  const allNotes = metaNotes.length === 0 ? notes : [...notes, ...metaNotes]
+  findings.push(...evaluateShadowRules({
+    manifest,
+    version: resolved.version,
+    versions: resolved.versions,
+    ...publishedBy === undefined ? {} : { publishedBy },
+  }))
+
+  const review = buildReview(parsed.name, files, manifest, patchText, oversized, allNotes)
+
+  // 判定只看 error 级：影子命中照样写进报告与归档，但不阻止安装。
+  const blockers = findings.filter(finding => finding.severity === 'error')
   // 命中高危但包在信任清单里：放行，但保留 findings 让报告如实写出命中了什么。
-  const trustedHit = findings.length > 0 && isTrustedPackage(options?.trusted, parsed.name)
+  const trustedHit = blockers.length > 0 && isTrustedPackage(options?.trusted, parsed.name)
 
   return {
     spec: rawSpec,
@@ -590,11 +786,11 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
     installSpec: resolved.installSpec,
     tarball: resolved.tarball,
     registry: resolved.registry,
-    decision: findings.length > 0 && !trustedHit ? 'block' : 'pass',
+    decision: blockers.length > 0 && !trustedHit ? 'block' : 'pass',
     ...trustedHit ? { trustedOverride: true } : {},
     findings,
     review,
-    notes,
+    notes: allNotes,
   }
 }
 
@@ -613,11 +809,21 @@ export function gatePlainLines(result: GateResult): string[] {
     + (result.trustedOverride === true ? '（命中高危，但在信任清单里，已按授权放行）' : ''),
   )
   lines.push(`  RV 提示：${result.review.hints.length} 条（仅供参考，不参与判定）`)
-  if (result.findings.length === 0) {
+  const blockers = result.findings.filter(finding => finding.severity === 'error')
+  const shadows = result.findings.filter(finding => finding.severity === 'warn')
+  if (blockers.length === 0) {
     lines.push('  高危规则：未命中')
   } else {
-    lines.push('  高危规则：')
-    for (const finding of result.findings) {
+    lines.push('  高危规则（命中即拒绝）：')
+    for (const finding of blockers) {
+      lines.push(`    ${finding.id} ${finding.title}${finding.where === undefined ? '' : `（${finding.where}）`}`)
+      lines.push(`      ${finding.detail}`)
+    }
+  }
+  if (shadows.length > 0) {
+    // 影子项单独一段：它们写进报告和归档，但不改变上面的结论。
+    lines.push('  影子规则（只观察，不阻断）：')
+    for (const finding of shadows) {
       lines.push(`    ${finding.id} ${finding.title}${finding.where === undefined ? '' : `（${finding.where}）`}`)
       lines.push(`      ${finding.detail}`)
     }
@@ -643,11 +849,21 @@ export function gateMarkdownLines(result: GateResult): string[] {
   for (const hint of result.review.hints) {
     lines.push(`- ${hint.severity.toUpperCase()} ${hint.id} ${hint.title}${hint.where === undefined ? '' : `（\`${hint.where}\`）`}`)
   }
-  lines.push('', '### 高危规则')
-  if (result.findings.length === 0) lines.push('', '未命中。')
-  for (const finding of result.findings) {
+  const blockers = result.findings.filter(finding => finding.severity === 'error')
+  const shadows = result.findings.filter(finding => finding.severity === 'warn')
+  lines.push('', '### 高危规则（命中即拒绝）')
+  if (blockers.length === 0) lines.push('', '未命中。')
+  for (const finding of blockers) {
     lines.push('', `- **ERROR ${finding.id}** ${finding.title}${finding.where === undefined ? '' : `（\`${finding.where}\`）`}`)
     lines.push(`  - ${finding.detail}`)
+  }
+  if (shadows.length > 0) {
+    lines.push('', '### 影子规则（只观察，不阻断）')
+    lines.push('', '第一版观察项：命中会写进报告和归档，但不改变上面的结论。收集一段时间真实误报率后，再决定是否升级为阻断。')
+    for (const finding of shadows) {
+      lines.push('', `- **WARN ${finding.id}** ${finding.title}${finding.where === undefined ? '' : `（\`${finding.where}\`）`}`)
+      lines.push(`  - ${finding.detail}`)
+    }
   }
   lines.push('', '**边界**：覆盖 `--gate`、`/install`、插件页与模型工具发起的安装（后两者经过包装的 `installBundle`）；`dsh plugin add` 与手改 `package.json` 后的 `pnpm install` 不走服务，无法覆盖。')
   lines.push('', '**同源限制**：取包用 `options.registry` 指定的源，但 pnpm 在该源不可达时会回退到本机配置的备用源，因此「审的字节」与「装的字节」不保证完全相同。')
@@ -665,6 +881,9 @@ export function gateJson(result: GateResult): Record<string, unknown> {
     registry: result.registry,
     decision: result.decision,
     ...result.trustedOverride === true ? { trustedOverride: true } : {},
+    // 脚本可据此区分「有多少条真的会阻止安装」；findings 里每条自带 severity。
+    blockerCount: result.findings.filter(finding => finding.severity === 'error').length,
+    shadowCount: result.findings.filter(finding => finding.severity === 'warn').length,
     disclaimer: 'static gate, not a malware verdict',
     findings: result.findings.map(finding => ({ ...finding })),
     rvHints: result.review.hints.map(hint => ({ ...hint })),
