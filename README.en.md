@@ -410,6 +410,8 @@ That is also why the gate must **not** put the archive service in its `inject` l
 
 The archive contains **no local paths** — only package name, version, registry URL and rule ids. Evidence fields hold package-internal script fragments, which is the inspection content itself.
 
+> **It does record the registry URL.** If the machine points at an internal mirror, that host name ends up in the archive. The file stays local and is never uploaded by the plugin — but check that section before pasting archive fragments into an issue or a chat.
+
 ## Config
 
 ```yaml
