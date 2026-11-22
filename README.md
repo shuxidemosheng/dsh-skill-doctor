@@ -41,7 +41,7 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.3.1`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.4.0`。
 
 0.14.0 起插件页会显示**四个组件行**（体检 / 外部技能挂载 / 安装门禁 / 审查归档），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
@@ -558,6 +558,8 @@ GitHub Actions：
 | `skill-doctor` | `dsh-skill-doctor` | 四个体检工具、斜杠命令、面板（只读诊断） |
 | `skill-doctor-gate` | `dsh-skill-doctor/gate` | 包装 `installBundle`，插件页安装前审 tarball；关掉即放行 |
 | `skill-doctor-audit` | `dsh-skill-doctor/audit` | 把每次审查的完整结论归档，按容量与时间自动修剪；关掉即停止记录 |
+
+后三行在插件页显示的**标题与简介**来自 `<子路径>/locale/{en,zh}.json` 里的 `meta.title` / `meta.description`（1.4.0 起）。技术路径 `dsh-skill-doctor/compat` 仍会以小字列在标题下方——那是模块解析地址，改了 loader 就找不到模块，所以保留。
 | `skill-doctor-compat` | `dsh-skill-doctor/compat` | 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh 的技能视图 |
 
 关掉任一行只卸载那一行：关掉挂载行只是撤掉 provider，关掉门禁行只是解除包装，体检照常跑。底层原因：dsh 的一行组件就是 `cordis.patch.yml` 里 `- insert:` 下的一个子项，行开关作用于整行的 fiber（卸载/挂载）。多种能力写进同一个 `apply()` 就只能一起开、一起关，所以拆成多个模块入口，通过 `package.json` 的 `exports` 子路径（`./compat`、`./gate`）暴露。

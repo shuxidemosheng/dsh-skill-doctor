@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "安装门禁",
+    "description": "安装前先审 registry tarball，命中 GT001–GT003 就拒绝。插件页、dshmarket 与模型工具发起的安装都经过它；关掉这一行即放行。"
+  }
+}

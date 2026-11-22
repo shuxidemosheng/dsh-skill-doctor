@@ -41,7 +41,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@1.3.1`.
+That installs the latest version; pin it by appending a version, e.g. `@1.4.0`.
 
 From 0.14.0 the plugin page shows **four component rows** (checkup / external skill sources / install gate / review archive), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
@@ -453,6 +453,8 @@ From 0.14.0 the package exposes component rows in the plugin page, each with its
 | `skill-doctor` | `dsh-skill-doctor` | Four checkup tools, slash commands, panel (read-only diagnosis) |
 | `skill-doctor-gate` | `dsh-skill-doctor/gate` | Wraps `installBundle` and inspects the tarball before a plugin-page install; switching it off lets the install through |
 | `skill-doctor-audit` | `dsh-skill-doctor/audit` | Archives every verdict with automatic capacity and age trimming; switching it off stops recording |
+
+The **title and description** the plugin page shows for the last three rows come from `meta.title` / `meta.description` in `<subpath>/locale/{en,zh}.json` (since 1.4.0). The technical path `dsh-skill-doctor/compat` still appears in small text under the title — it is the module resolution address, and changing it would make the loader fail to find the module.
 | `skill-doctor-compat` | `dsh-skill-doctor/compat` | Mounts Claude Code / Codex / ZCode skill directories into the dsh skill view |
 
 Switching any row off unloads only that row: the mount row drops the provider, the gate row removes the wrapper, and the checkup keeps running. Why separate modules: one component row in dsh is one child under `- insert:` in `cordis.patch.yml`, and a row switch acts on that row's whole fiber (unload/mount). Putting several abilities in one `apply()` would force them on and off together, so they live behind separate entry points exposed through `package.json` `exports` (`./compat`, `./gate`, `./audit`).

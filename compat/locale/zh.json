@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "外部技能挂载",
+    "description": "把 Claude Code / Codex / ZCode 的技能目录挂进 dsh 的技能视图。只读，不带热更新——改完 SKILL.md 要重启。"
+  }
+}
