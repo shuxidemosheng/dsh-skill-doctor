@@ -31,7 +31,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 - **Shows which skills the model never uses.** The panel's Usage tab ranks skills by load count across sessions — the dynamic evidence static checks cannot give you.
 - **Groups by root cause, not by count.** If 13 skills are all "description too long" and all named `nature-*`, that is one template problem — the report says so and tells you fixing the template beats fixing 13 files.
 - **Says which dsh version its ruler was calibrated against.** "Over 500 chars is long" is a dsh convention, not a constant. The report states its baseline; when your dsh moved to another `major.minor`, it warns that thresholds may be stale instead of asserting them.
-- **One plugin, three component rows, switched independently.** The second row mounts Claude Code / Codex / ZCode skill directories into dsh; the third is the install gate — switch it off in the plugin page when you knowingly want to install a plugin it would refuse. Diagnosis stays the main job; the other two rows are optional.
+- **One plugin, four component rows, switched independently.** The second row mounts Claude Code / Codex / ZCode skill directories into dsh; the third is the install gate (switch it off when you knowingly want to install a plugin it would refuse); the fourth archives every verdict. Diagnosis stays the main job; the other three rows are optional.
 - **The gate has a per-package way out.** Being refused does not mean uninstalling: `/doctor trust <pkg>` adds that package to the trust list, after which the gate **still inspects it fully and still lists every finding**, it just does not refuse — and the report says the release came from trust. `/doctor untrust` revokes it. The list lives at `$DSH_HOME/skill-doctor/trusted.json`, keyed by package name (not version), and takes effect without a restart.
 - **Runs in CI.** `dsh-skill-lint` needs no dsh runtime, with proper exit codes and `--json`.
 
@@ -41,9 +41,9 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@1.0.0`.
+That installs the latest version; pin it by appending a version, e.g. `@1.1.0`.
 
-From 0.14.0 the plugin page shows **three component rows** (checkup / install gate / external skill sources), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
+From 0.14.0 the plugin page shows **four component rows** (checkup / external skill sources / install gate / review archive), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
 Then **fully quit and reopen** dsh (the panel is client-side code loaded at startup).
 
@@ -106,7 +106,7 @@ Eight commands ship with the plugin. Type `/` — the menu gains a Chinese group
 
 | Menu | Composer | What it does |
 |---|---|---|
-| 体检 | `/doctor` | Check every skill for breakage and visibility, merging repeated findings into one cause. `/doctor trust [pkg]` manages the install gate's trust list (bare form lists it, `/doctor untrust <pkg>` revokes) |
+| 体检 | `/doctor` | Check every skill for breakage and visibility, merging repeated findings into one cause. `/doctor trust [pkg]` manages the gate's trust list (`untrust` revokes); `/doctor audit` reads the review archive (`stats` / `prune` / `<pkg>`) |
 | 查目录 | `/scope <dir>` | Check only the directory you name |
 | 改写 | `/rewrite <skill>` | Draft a rewrite for an oversized description, with budget and cut-off triggers |
 | 复诊 | `/followup` | Diff against the previous checkup |
@@ -371,6 +371,25 @@ When the plugin page refuses an install, the dialog names both ways out: `/docto
 - run: npx --package dsh-skill-doctor dsh-skill-lint ./skills --warn-as-error
 ```
 
+### Review archive (optional fourth row)
+
+After every inspection the gate hands the **full verdict** to the archive row: which rules hit, the evidence text (truncated to 500 characters), the RV hint list, the decision, and which entry point started the inspection.
+
+```text
+/doctor audit              last 10 records
+/doctor audit <pkg>        everything for that package
+/doctor audit stats        count / size / oldest and newest
+/doctor audit prune        trim manually
+```
+
+Capacity and lifetime are managed independently: **64 KB per record, 20 MB total, 5000 records, 180 days** — whichever limit is hit first, the oldest entries go. Storage is a single JSONL at `$DSH_HOME/skill-doctor/audit.jsonl`: appends are O(1), and the file is rewritten only when a limit is exceeded.
+
+**Switching the row off stops recording**; existing records are kept and stay queryable. The gate itself is unaffected — it probes for the archive service at runtime on every inspection and simply skips recording when the service is absent.
+
+That is also why the gate must **not** put the archive service in its `inject` list: doing so would make the gate itself fail to load whenever the archive row is switched off (cordis skips a plugin when any injected service is missing). The `0.18.0` regression was this exact mechanism in reverse.
+
+The archive contains **no local paths** — only package name, version, registry URL and rule ids. Evidence fields hold package-internal script fragments, which is the inspection content itself.
+
 ## Config
 
 ```yaml
@@ -405,15 +424,16 @@ The install gate is **not part of this config**: it is its own component row (`s
 
 ## External skill sources (optional second row)
 
-From 0.14.0 the package exposes component rows in the plugin page, each with its own switch (the first two also carry their own `config`). There are **three** today:
+From 0.14.0 the package exposes component rows in the plugin page, each with its own switch (the first two also carry their own `config`). There are **four** today:
 
 | Row | Module | What it does |
 |---|---|---|
 | `skill-doctor` | `dsh-skill-doctor` | Four checkup tools, slash commands, panel (read-only diagnosis) |
 | `skill-doctor-gate` | `dsh-skill-doctor/gate` | Wraps `installBundle` and inspects the tarball before a plugin-page install; switching it off lets the install through |
+| `skill-doctor-audit` | `dsh-skill-doctor/audit` | Archives every verdict with automatic capacity and age trimming; switching it off stops recording |
 | `skill-doctor-compat` | `dsh-skill-doctor/compat` | Mounts Claude Code / Codex / ZCode skill directories into the dsh skill view |
 
-Switching any row off unloads only that row: the mount row drops the provider, the gate row removes the wrapper, and the checkup keeps running. Why separate modules: one component row in dsh is one child under `- insert:` in `cordis.patch.yml`, and a row switch acts on that row's whole fiber (unload/mount). Putting several abilities in one `apply()` would force them on and off together, so they live behind separate entry points exposed through `package.json` `exports` (`./compat`, `./gate`).
+Switching any row off unloads only that row: the mount row drops the provider, the gate row removes the wrapper, and the checkup keeps running. Why separate modules: one component row in dsh is one child under `- insert:` in `cordis.patch.yml`, and a row switch acts on that row's whole fiber (unload/mount). Putting several abilities in one `apply()` would force them on and off together, so they live behind separate entry points exposed through `package.json` `exports` (`./compat`, `./gate`, `./audit`).
 
 **Defaults**: all three sources are `true` in the shipped patch, so installing mounts them immediately; missing directories are skipped silently. A native dsh skill always wins over a same-named imported one (rank 100/400 < imported 210-470), and project-level imports beat user-level ones.
 
@@ -540,7 +560,7 @@ Capability boundaries, not omissions:
 - The four tool names and their parameter schemas: `skill_doctor` / `skill_lint` / `skill_explain` / `plugin_doctor`
 - The eight slash commands, including the `/doctor trust` subcommand
 - Config key names and accepted values
-- The `id` of all three component rows in `cordis.patch.yml`
+- The `id` of all four component rows in `cordis.patch.yml`
 - CLI `--json` fields and exit codes (`0` pass / `1` hit / `2` could not finish)
 
 **Not promised**: compatibility with every dsh version. Four contracts below are defined by dsh and are outside this repository's control:
@@ -554,7 +574,7 @@ Capability boundaries, not omissions:
 
 These are followed when they change, **with a 2.0.0 release if needed**.
 
-`engines.dsh` is an open lower bound, `>=0.2.0-rc.2`: dsh is still in rc, and capping the upper bound would block newer builds. When a dsh version turns out incompatible, check first whether the `pluginManager` service name still exists and whether `cordis.patch.yml` is still the three-row shape — those are the usual failure points.
+`engines.dsh` is an open lower bound, `>=0.2.0-rc.2`: dsh is still in rc, and capping the upper bound would block newer builds. When a dsh version turns out incompatible, check first whether the `pluginManager` service name still exists and whether `cordis.patch.yml` is still the four-row shape — those are the usual failure points.
 
 ## Troubleshooting
 
@@ -629,7 +649,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 400 tests
+npm test          # 425 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

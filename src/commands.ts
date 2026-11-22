@@ -32,6 +32,8 @@ import { scanRoots } from './scanner/fs-scan.js'
 import { profileDirOf, scanProfile } from './plugins/scan.js'
 import { installAfterGate, parseRegistrySpec } from './plugins/gate.js'
 import { addTrust, isTrusted, loadTrust, removeTrust, trustPath } from './trust.js'
+import type { AuditEntry } from './audit.js'
+import type { AuditService } from './audit-entry.js'
 import {
   getLastReview, reviewBundle, reviewPlainLines, setLastReview,
 } from './plugins/review.js'
@@ -190,7 +192,7 @@ export function plainFollowUp(diff: BaselineDiff, label: string): string {
 
 /** 命令名 → 输入提示；`<...>` 部分由用户补齐。 */
 const COMMAND_META = {
-  doctor: { description: '体检所有技能', hint: '[目录 | trust <包名>]' },
+  doctor: { description: '体检所有技能', hint: '[目录 | trust <包名> | audit]' },
   scope: { description: '只体检一个目录', hint: '<目录或 SKILL.md 路径>' },
   rewrite: { description: '简介改写工单', hint: '<技能名>' },
   followup: { description: '和上次体检对比', hint: '[目录，留空=全部]' },
@@ -206,6 +208,88 @@ const COMMAND_META = {
  * 每次执行都重新采集技能（不缓存）：技能文件随时会被编辑，
  * 命令输出的价值就在于"此刻"的状态。
  */
+/** 把 ISO 时间渲染成本地 `MM-DD HH:mm`，避免让用户看 UTC。 */
+function fmtAuditTime(iso: string): string {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso.slice(5, 16).replace('T', ' ')
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+/** 一条记录的一句话摘要：结论 + 命中项。 */
+function auditLine(entry: AuditEntry): string {
+  const verdict = entry.decision === 'pass'
+    ? (entry.trustedOverride === true ? '通过（信任放行）' : '通过')
+    : entry.decision === 'block' ? `拒绝 ${entry.findings.map(f => f.id).join('、')}` : `未审成 ${entry.problem ?? ''}`
+  return `${fmtAuditTime(entry.ts)}  ${`${entry.name}@${entry.version}`.padEnd(34)}${verdict}`
+}
+
+/**
+ * `/doctor audit` 的实现：查看归档、统计、手动修剪。
+ *
+ * 归档由独立组件行（`skill-doctor-audit`）提供。行被关掉时服务不存在，
+ * 这里如实告诉用户去哪打开，而不是静默返回空。
+ */
+async function auditCommand(ctx: Context, arg: string): Promise<string> {
+  const lookup = (ctx as unknown as { get?: (name: string, strict?: boolean) => unknown }).get
+  const audit = typeof lookup === 'function'
+    ? lookup.call(ctx, 'skillDoctorAudit', false) as AuditService | undefined
+    : undefined
+
+  if (audit === undefined || typeof audit.query !== 'function') {
+    return [
+      '审查归档不可用：skill-doctor-audit 那一行没有启用。',
+      '到插件页打开它即可开始记录（已有归档文件不会被删除）。',
+    ].join('\n')
+  }
+
+  if (arg === 'stats') {
+    const stats = await audit.stats()
+    if (stats.count === 0) return `审查归档是空的。\n文件：${audit.path}`
+    const kb = (stats.bytes / 1024).toFixed(1)
+    return [
+      '审查归档统计',
+      `  条数：${stats.count}`,
+      `  占用：${kb} KB（上限 20 MB / 5000 条 / 180 天）`,
+      `  最旧：${fmtAuditTime(stats.oldest ?? '')}`,
+      `  最新：${fmtAuditTime(stats.newest ?? '')}`,
+      `  文件：${audit.path}`,
+    ].join('\n')
+  }
+
+  if (arg === 'prune') {
+    const result = await audit.prune()
+    if (result.removed === 0) return `无需修剪：${result.kept} 条记录都在保留范围内。`
+    const kb = (result.freedBytes / 1024).toFixed(1)
+    return `已清理 ${result.removed} 条旧记录，释放 ${kb} KB，保留 ${result.kept} 条。`
+  }
+
+  if (arg.length === 0) {
+    const entries = await audit.query({ limit: 10 })
+    const stats = await audit.stats()
+    if (entries.length === 0) {
+      return [
+        '审查归档是空的。',
+        `文件：${audit.path}`,
+        '装一个插件后这里会出现记录；关掉 skill-doctor-audit 那一行则不再记录。',
+      ].join('\n')
+    }
+    return [
+      `审查归档 · 最近 ${entries.length} 条（共 ${stats.count} 条）`,
+      ...entries.map(entry => `  ${auditLine(entry)}`),
+      '提示：/doctor audit stats 看占用；/doctor audit <包名> 看单个包的历史。',
+    ].join('\n')
+  }
+
+  // 其余参数一律当包名。
+  const entries = await audit.query({ pkg: arg })
+  if (entries.length === 0) return `审查归档里没有 ${arg} 的记录。`
+  return [
+    `审查归档 · ${arg}（${entries.length} 条）`,
+    ...entries.map(entry => `  ${auditLine(entry)}  [${entry.source}]`),
+  ].join('\n')
+}
+
 /**
  * `/doctor trust` 的实现：列出、添加、撤销信任清单。
  *
@@ -311,6 +395,8 @@ export function buildCommands(ctx: Context, config: ResolvedConfig): CommandSpec
         // 避免把 `trustfoo` 这种目录名吃掉。
         const sub = /^(un)?trust(?:\s+(.*))?$/i.exec(input.trim())
         if (sub !== null) return trustCommand(sub[1] !== undefined, (sub[2] ?? '').trim())
+        const auditSub = /^audit(?:\s+(.*))?$/i.exec(input.trim())
+        if (auditSub !== null) return auditCommand(ctx, (auditSub[1] ?? '').trim())
         if (/^trust\b/i.test(input.trim())) {
           // 走到这里说明匹配失败但看起来像想用子命令，给一条明确提示，
           // 同时告诉真有同名目录时该用哪条命令。

@@ -13,6 +13,7 @@ import {
 } from '../src/commands'
 import { resolveConfig } from '../src/config'
 import { loadTrust, trustPath } from '../src/trust'
+import type { AuditEntry } from '../src/audit'
 import type { BaselineDiff } from '../src/baseline'
 import type { Finding, ProvenanceView, RuleId, SkillLintResult } from '../src/types'
 import { createFakeCtx, fakeExec, loadFixture } from './helpers'
@@ -398,5 +399,102 @@ describe('/doctor trust', () => {
     await doctor()('trustfoo')
     const file = await loadTrust(trustPath())
     expect(file.trusted).toEqual([])
+  })
+})
+
+describe('/doctor audit', () => {
+  const entry = (over: Partial<AuditEntry> = {}): AuditEntry => ({
+    v: 1,
+    ts: '2026-11-22T05:10:00.000Z',
+    source: 'plugin-page',
+    spec: 'demo@1.0.0',
+    name: 'demo',
+    version: '1.0.0',
+    registry: 'https://registry.example',
+    decision: 'pass',
+    findings: [],
+    hints: [],
+    ...over,
+  })
+
+  /** 造一个只提供 skillDoctorAudit 的 ctx。 */
+  function withAudit(service: Record<string, unknown>) {
+    const env = createFakeCtx([])
+    ;(env.ctx as Record<string, unknown>).get = (name: string) =>
+      name === 'skillDoctorAudit' ? service : undefined
+    return env
+  }
+
+  function auditCmd(env = createFakeCtx([])): CommandSpec['run'] {
+    const specs = buildCommands(env.ctx as never, resolveConfig(undefined))
+    return specs.find(spec => spec.name === 'doctor')!.run
+  }
+
+  it('explains how to enable the row when the service is absent', async () => {
+    const text = await auditCmd()('audit')
+    expect(text).toContain('skill-doctor-audit')
+    expect(text).toContain('插件页')
+  })
+
+  it('lists recent entries with verdicts', async () => {
+    const env = withAudit({
+      path: '/tmp/audit.jsonl',
+      query: async () => [entry(), entry({ decision: 'block', findings: [{ id: 'GT001', severity: 'error', title: 't', detail: 'd' }] })],
+      stats: async () => ({ count: 2, bytes: 2048, oldest: '2026-11-22T05:10:00.000Z', newest: '2026-11-22T05:11:00.000Z' }),
+      prune: async () => ({ removed: 0, kept: 2, freedBytes: 0 }),
+    })
+    const text = await auditCmd(env)('audit')
+    expect(text).toContain('审查归档')
+    expect(text).toContain('demo@1.0.0')
+    expect(text).toContain('通过')
+    expect(text).toContain('拒绝 GT001')
+  })
+
+  it('reports an empty archive with the file path', async () => {
+    const env = withAudit({
+      path: '/tmp/audit.jsonl',
+      query: async () => [],
+      stats: async () => ({ count: 0, bytes: 0 }),
+      prune: async () => ({ removed: 0, kept: 0, freedBytes: 0 }),
+    })
+    const text = await auditCmd(env)('audit')
+    expect(text).toContain('空的')
+    expect(text).toContain('/tmp/audit.jsonl')
+  })
+
+  it('shows stats including the retention limits', async () => {
+    const env = withAudit({
+      path: '/tmp/audit.jsonl',
+      query: async () => [],
+      stats: async () => ({ count: 23, bytes: 49356, oldest: '2026-11-18T03:31:00.000Z', newest: '2026-11-22T05:10:00.000Z' }),
+      prune: async () => ({ removed: 0, kept: 23, freedBytes: 0 }),
+    })
+    const text = await auditCmd(env)('audit stats')
+    expect(text).toContain('条数：23')
+    expect(text).toContain('20 MB')
+    expect(text).toContain('5000 条')
+  })
+
+  it('reports a prune result', async () => {
+    const env = withAudit({
+      path: '/tmp/audit.jsonl',
+      query: async () => [],
+      stats: async () => ({ count: 0, bytes: 0 }),
+      prune: async () => ({ removed: 7, kept: 100, freedBytes: 4096 }),
+    })
+    const text = await auditCmd(env)('audit prune')
+    expect(text).toContain('已清理 7 条')
+    expect(text).toContain('保留 100 条')
+  })
+
+  it('filters by package name for the remaining argument', async () => {
+    const env = withAudit({
+      path: '/tmp/audit.jsonl',
+      query: async (q: { pkg?: string }) => q?.pkg === 'demo' ? [entry()] : [],
+      stats: async () => ({ count: 1, bytes: 100 }),
+      prune: async () => ({ removed: 0, kept: 1, freedBytes: 0 }),
+    })
+    expect(await auditCmd(env)('audit demo')).toContain('审查归档 · demo')
+    expect(await auditCmd(env)('audit ghost')).toContain('没有 ghost 的记录')
   })
 })

@@ -1,10 +1,11 @@
 # dsh-skill-doctor —— 技能体检
 #
-# 本组合包含三个组件行，插件页可以分别开关：
+# 本组合包含四个组件行，插件页可以分别开关：
 #   1) skill-doctor         —— 四个体检工具 + 斜杠命令（只读诊断）
 #   2) skill-doctor-compat  —— 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh
 #   3) skill-doctor-gate    —— 插件页安装门禁（包装 installBundle）
-# 三行各有自己的生命周期；关掉一行不影响另外两行。
+#   4) skill-doctor-audit   —— 审查归档（完整结论落盘 + 容量管理）
+# 四行各有自己的生命周期；关掉一行不影响另外三行。
 #
 # 第一行的 extraRoots 是「体检时临时扫一遍外部目录」（一次性，只影响报告），
 # 与第二行的运行时挂载是两件事，别混用：
@@ -42,3 +43,10 @@
     # `/install` 命令属于主组件与 CLI，不随这一行启停，仍会审。
     - id: skill-doctor-gate
       name: dsh-skill-doctor/gate
+
+    # 审查归档（第四行）。门禁每次审查后把完整结论交到这里，按容量与时间
+    # 自动修剪（20 MB / 5000 条 / 180 天）。关掉这一行就不再记录，已有归档
+    # 文件保留，仍可用 /doctor audit 查询；门禁本身不受影响（它运行时软探测
+    # 本行提供的服务，拿不到就跳过记录）。
+    - id: skill-doctor-audit
+      name: dsh-skill-doctor/audit

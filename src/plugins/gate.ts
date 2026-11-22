@@ -42,6 +42,7 @@ import {
 } from './review.js'
 import { parsePatchIds } from './scan.js'
 import { loadTrust, trustedNames } from '../trust.js'
+import type { AuditSource } from '../audit.js'
 
 /** 门禁规则的稳定 id。与 RV* 分开编号，避免「提示」和「拒绝」混成一件事。 */
 export type GateRuleId = 'GT001' | 'GT002' | 'GT003'
@@ -490,6 +491,39 @@ function isTrustedPackage(names: readonly string[] | undefined, pkg: string): bo
 }
 
 /**
+ * 把这次审查的完整结论交给归档行。
+ *
+ * **不能把 `skillDoctorAudit` 写进 inject**：用户关掉归档行后服务就不存在，
+ * 而 cordis 的语义是「注入列表里任一服务缺失就整体不 apply」——门禁会跟着
+ * 失效。所以这里每次现探测，拿不到就当没这个功能。
+ *
+ * 双保险：不仅检查服务存在，还检查 `record` 是函数。测试里的假 ctx 对任何
+ * 名字都返回同一个对象，只判断 `!== undefined` 会误判。
+ */
+/** recordAudit 只用到这两样，不要求完整 Context —— 插件页那条路的 ctx 是窄接口。 */
+interface AuditHost {
+  readonly get?: (name: string, strict?: boolean) => unknown
+  readonly logger: { warn: (message: string) => void }
+}
+
+async function recordAudit(ctx: AuditHost, gate: GateResult, source: AuditSource): Promise<void> {
+  const lookup = (ctx as unknown as { get?: (name: string, strict?: boolean) => unknown }).get
+  if (typeof lookup !== 'function') return
+  const audit = lookup.call(ctx, 'skillDoctorAudit', false) as
+    | { record?: (verdict: GateResult, from: AuditSource) => Promise<void> }
+    | undefined
+  if (audit === undefined || typeof audit.record !== 'function') return
+  try {
+    await audit.record(gate, source)
+  } catch (error) {
+    // 归档写不进去只留痕，绝不影响这次安装的判定。
+    ctx.logger.warn(
+      `skill-doctor: audit record failed for ${gate.spec}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+  }
+}
+
+/**
  * 门禁主流程：校验 spec → 取元数据 → 下载 tarball → 内存解压 → 审 → 判定。
  * 任何一步失败都返回 `decision: 'error'`，调用方不得把它当通过。
  */
@@ -663,6 +697,7 @@ export async function installAfterGate(
   precomputed?: GateResult,
 ): Promise<string[]> {
   const gate = precomputed ?? await gateSpec(rawSpec, await trustOptions())
+  await recordAudit(ctx, gate, 'install')
   const lines = gatePlainLines(gate)
   if (gate.decision !== 'pass') return lines
 
@@ -801,6 +836,8 @@ export function registerInstallGate(
       )
       return original.call(manager, spec, options)
     }
+
+    await recordAudit(probe, gate, 'plugin-page')
 
     if (gate.decision === 'block') {
       const ids = gate.findings.map(finding => finding.id).join('、')

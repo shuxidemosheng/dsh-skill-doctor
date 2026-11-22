@@ -31,7 +31,7 @@
 - **知道哪些技能模型从来不用。** 面板的「使用统计」按加载次数排行，跨会话累计——静态检查给不出的动态证据。
 - **按根因看，不按个数看。** 13 个技能都“简介超长”，如果它们都叫 `nature-*`，那多半是一套模板的问题——报告会把它聚成一条，告诉你改一次顶 13 次。
 - **尺子会过期，报告会说明。** “超过 500 字算长”是 dsh 当时的约定，不是常数。报告会把自己按哪个 dsh 版本校准过写出来；版本对不上时，明确提示阈值可能已过期。
-- **一个插件，三行组件，可分别开关。** 第二行把 Claude Code / Codex / ZCode 的技能目录挂进 dsh；第三行是安装门禁，遇到「明知有风险仍要装」的插件时在插件页把它关掉即可安装。诊断仍是主线，另外两行都是可选的。
+- **一个插件，四行组件，可分别开关。** 第二行把 Claude Code / Codex / ZCode 的技能目录挂进 dsh；第三行是安装门禁（遇到「明知有风险仍要装」的插件时关掉它即可安装）；第四行是审查归档（完整结论落盘，可单独关掉）。诊断仍是主线，另外三行都是可选的。
 - **门禁有细粒度出口。** 被拦住不等于只能卸载：`/doctor trust <包名>` 把这个包加进信任清单，之后门禁**照样完整审查、照样列出命中项**，只是不据以拒绝，并在报告里标注「按信任清单放行」；`/doctor untrust` 随时撤销。清单在 `$DSH_HOME/skill-doctor/trusted.json`，按包名记、不绑版本，改完立刻生效不用重启。
 - **CI 里能跑。** `dsh-skill-lint` 不依赖 dsh 运行时，退出码和 `--json` 都准备好了。
 
@@ -41,9 +41,9 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.0.0`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.1.0`。
 
-0.14.0 起插件页会显示**三个组件行**（体检 / 安装门禁 / 外部技能挂载），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
+0.14.0 起插件页会显示**四个组件行**（体检 / 外部技能挂载 / 安装门禁 / 审查归档），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
 装完**完全退出并重开** dsh（面板等客户端代码只在启动时加载）。
 
@@ -105,7 +105,7 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor
 
 | 菜单 | 输入框 | 作用 |
 |---|---|---|
-| 体检 | `/doctor` | 检查全部技能，看有没有坏、模型能否看到，并把同类问题合并。`/doctor trust [包名]` 管理安装门禁的信任清单（留空列出现状，`/doctor untrust <包名>` 撤销） |
+| 体检 | `/doctor` | 检查全部技能，看有没有坏、模型能否看到，并把同类问题合并。`/doctor trust [包名]` 管理门禁的信任清单（`untrust` 撤销）；`/doctor audit` 查看审查归档（`stats` / `prune` / `<包名>`） |
 | 查目录 | `/scope <目录>` | 只检查你指定的目录，不看别处 |
 | 改写 | `/rewrite <技能名>` | 给简介超长的技能出改写稿，附字数预算和被切掉的触发词 |
 | 复诊 | `/followup` | 和上次体检对比，看哪些修好了、哪些又变差了 |
@@ -452,6 +452,25 @@ GT 规则是启发式，一定存在误报，也一定存在「我就是要装�
 - **不落盘、不执行被审包的代码、不删文件。** tarball 在内存里解压，手写 tar 解析读文本；没有临时目录，也就没有清理动作。
 - **不是恶意代码判定。** 不做 AST / 沙箱 / 依赖供应链审计；GT 规则是结构性启发式，会漏报也会误报。
 
+### 审查归档（可选第四组件）
+
+门禁每次审完，把**完整结论**交给归档行：命中的规则、判断依据原文（截断到 500 字）、RV 提示清单、最终决策、这次审查从哪个入口发起。
+
+```text
+/doctor audit              最近 10 条
+/doctor audit <包名>        这个包的全部历史
+/doctor audit stats        条数 / 占用 / 最旧与最新
+/doctor audit prune        手动修剪
+```
+
+容量与生命周期独立管理：**单条 64 KB、总量 20 MB、5000 条、保留 180 天**，任一超限就从最旧的开始删。存储是单个 JSONL（`$DSH_HOME/skill-doctor/audit.jsonl`）——追加是 O(1)，只在超限时重写整个文件。
+
+**关掉这一行就不再记录**，已有归档保留、仍可用 `/doctor audit` 查询。门禁本身不受影响：它在每次审查时**运行时软探测**归档服务，拿不到就跳过记录。
+
+这也是为什么门禁**不能**把归档服务写进 `inject`——一旦写进去，用户关掉归档行会让门禁跟着失效（cordis 的语义是「注入列表里任一服务缺失就整体不 apply」）。`0.18.0` 那次事故就是这个机制的反面教材。
+
+归档里**不写本机路径**，只写包名、版本、registry 地址和规则 id；证据字段是包内脚本片段这类判断依据，属于审查内容本身。
+
 ### 技能装前自检（技能目录，不是插件）
 
 装新技能之前，可以拿待安装目录手动跑一遍：
@@ -508,12 +527,13 @@ GitHub Actions：
 
 ## 外部技能挂载（可选第二组件）
 
-0.14.0 起这个包在插件页显示组件行，每行有自己的开关（前两行还有各自的 `config`）。当前是**三行**：
+0.14.0 起这个包在插件页显示组件行，每行有自己的开关（前两行还有各自的 `config`）。当前是**四行**：
 
 | 组件行 | 模块 | 做什么 |
 |---|---|---|
 | `skill-doctor` | `dsh-skill-doctor` | 四个体检工具、斜杠命令、面板（只读诊断） |
 | `skill-doctor-gate` | `dsh-skill-doctor/gate` | 包装 `installBundle`，插件页安装前审 tarball；关掉即放行 |
+| `skill-doctor-audit` | `dsh-skill-doctor/audit` | 把每次审查的完整结论归档，按容量与时间自动修剪；关掉即停止记录 |
 | `skill-doctor-compat` | `dsh-skill-doctor/compat` | 把 Claude Code / Codex / ZCode 的技能目录挂进 dsh 的技能视图 |
 
 关掉任一行只卸载那一行：关掉挂载行只是撤掉 provider，关掉门禁行只是解除包装，体检照常跑。底层原因：dsh 的一行组件就是 `cordis.patch.yml` 里 `- insert:` 下的一个子项，行开关作用于整行的 fiber（卸载/挂载）。多种能力写进同一个 `apply()` 就只能一起开、一起关，所以拆成多个模块入口，通过 `package.json` 的 `exports` 子路径（`./compat`、`./gate`）暴露。
@@ -556,7 +576,7 @@ GitHub Actions：
 
 > 补充（2026-11-08）：社区里 `dsh-plugin-skill-autoroute` 监听 dsh 原生的 `skills/change` 事件来失效自己的技能目录缓存，说明存在比常驻 `chokidar` watcher 更轻的路径。**未验证**：该事件能否让第三方 provider 触发 registry 重新 collect（那个插件只失效自己的缓存）。验证之前，本插件仍不做热更新，上面的结论不变。
 
-> `name: dsh-skill-doctor/compat` 这种第三方包子路径已在真实 dsh 桌面端验证：插件页显示「共 2 个组件 · 2 运行中」，两行都成功加载（那次实测时是两行；后续版本增加了第三行 `skill-doctor-gate`，加载方式相同）（验证的是 loader 与 fiber，不代表 `/doctor` 报告里导入技能的字段取值已在真实会话逐项核对）。若你的环境里第二行显示异常，先看 devtools 里的加载报错。
+> `name: dsh-skill-doctor/compat` 这种第三方包子路径已在真实 dsh 桌面端验证：插件页显示「共 2 个组件 · 2 运行中」，两行都成功加载（那次实测时是两行；后续版本又增加了 `skill-doctor-gate` 与 `skill-doctor-audit`，加载方式相同）（验证的是 loader 与 fiber，不代表 `/doctor` 报告里导入技能的字段取值已在真实会话逐项核对）。若你的环境里第二行显示异常，先看 devtools 里的加载报错。
 
 ### 来源与遮蔽（报告里的新指标）
 
@@ -643,7 +663,7 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 - 四个工具名与参数 schema：`skill_doctor` / `skill_lint` / `skill_explain` / `plugin_doctor`
 - 八条斜杠命令的名字与用法，含 `/doctor trust` 子命令
 - 配置键名与取值范围
-- `cordis.patch.yml` 里三行组件的 `id`
+- `cordis.patch.yml` 里四行组件的 `id`
 - CLI 的 `--json` 字段与退出码语义（`0` 通过 / `1` 命中 / `2` 未审成）
 
 **不承诺**与任意 dsh 版本兼容。下面四条契约由 dsh 定义，不在本仓库控制范围内：
@@ -657,7 +677,7 @@ dsh-skill-lint ~/.claude/skills --compare skill-doctor-baseline.json --save skil
 
 这四条变化时会跟随调整，**必要时发 2.0.0**。
 
-`engines.dsh` 目前是开放下界 `>=0.2.0-rc.2`：dsh 仍在 rc 阶段，锁上界会让新版本装不上，所以没有锁。发现某个 dsh 版本不兼容时，先确认 `pluginManager` 服务名是否还在、`cordis.patch.yml` 是否还是三行结构，这两处是最常见的失效点。
+`engines.dsh` 目前是开放下界 `>=0.2.0-rc.2`：dsh 仍在 rc 阶段，锁上界会让新版本装不上，所以没有锁。发现某个 dsh 版本不兼容时，先确认 `pluginManager` 服务名是否还在、`cordis.patch.yml` 是否还是四行结构，这两处是最常见的失效点。
 
 ## 故障排查
 
@@ -734,7 +754,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 400 个用例
+npm test          # 425 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```
