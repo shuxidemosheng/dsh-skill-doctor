@@ -64,6 +64,8 @@ let activeMode: string | null = null
 let modeFeedback: string | null = null
 let panelOpen = false
 let panelTab: 'activity' | 'usage' | 'modes' = 'modes'
+/** 活动列表是否展开到全部；默认只看最近 MAX_VISIBLE 条，避免长会话把面板撑爆。 */
+let activityExpanded = false
 let inConversation = false
 let overlayMounted = false
 
@@ -254,6 +256,12 @@ function togglePanel(): void {
 
 function switchTab(tab: 'activity' | 'usage' | 'modes'): void {
   panelTab = tab
+  emit()
+}
+
+/** 在「最近 20 条」与「全部」之间切换。数据一直在内存里，展开不产生额外读取。 */
+function toggleActivityExpanded(): void {
+  activityExpanded = !activityExpanded
   emit()
 }
 
@@ -624,7 +632,7 @@ function ActivityOverlay(): JSX.Element | null {
   if (!open || !active) return null
 
   const stats = summarize(entries)
-  const visible = recent(entries, MAX_VISIBLE)
+  const visible = activityExpanded ? entries : recent(entries, MAX_VISIBLE)
   const hidden = entries.length - visible.length
 
   return (
@@ -763,21 +771,50 @@ function ActivityOverlay(): JSX.Element | null {
         )}
       </div>
 
-      {/* 这段说明只对「活动」成立（20 条上限、工具名不带归属）。
+      {/* 这段说明只对「活动」成立（条数上限、工具名不带归属）。
           「使用统计」的规则不同（200 个技能上限、列的是技能名），它自己页内已有说明；
-          空列表时也不显示——上面那句空态提示已经够清楚。 */}
-      {panelTab === 'activity' && visible.length > 0 ? (
+          空列表时也不显示——上面那句空态提示已经够清楚。
+
+          截断必须配一个真的能展开的按钮：原先只写「另有 N 条没展开」，
+          读者会以为有个入口，其实没有。 */}
+      {panelTab === 'activity' && entries.length > 0 ? (
         <div
           style={{
             padding: '6px 14px 10px',
             fontSize: 10,
-            opacity: 0.55,
             borderTop: `1px solid ${TOKEN.border}`,
             lineHeight: 1.6,
           }}
         >
-          只显示最近 {MAX_VISIBLE} 条{hidden > 0 ? `，另有 ${hidden} 条更早的没展开` : ''}。
-          更早于会话窗口的调用读不到；工具属于哪个插件 dsh 没有暴露，所以这里只能显示工具名。
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.55 }}>
+            <span style={{ flex: 1 }}>
+              {activityExpanded
+                ? `显示全部 ${entries.length} 条`
+                : `只显示最近 ${Math.min(MAX_VISIBLE, entries.length)} 条`}
+            </span>
+            {entries.length > MAX_VISIBLE ? (
+              <button
+                type="button"
+                onClick={toggleActivityExpanded}
+                style={{
+                  flex: 'none',
+                  padding: '2px 8px',
+                  fontSize: 10,
+                  borderRadius: TOKEN.radius,
+                  border: `1px solid ${TOKEN.border}`,
+                  background: 'transparent',
+                  color: 'inherit',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {activityExpanded ? '收起' : `展开全部（${entries.length} 条）`}
+              </button>
+            ) : null}
+          </div>
+          <div style={{ opacity: 0.55, marginTop: 2 }}>
+            更早于会话窗口的调用读不到；工具属于哪个插件 dsh 没有暴露，所以这里只能显示工具名。
+          </div>
         </div>
       ) : null}
     </div>
