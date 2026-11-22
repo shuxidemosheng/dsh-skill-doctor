@@ -44,6 +44,39 @@ import { parsePatchIds } from './scan.js'
 import { loadTrust, trustedNames } from '../trust.js'
 import type { AuditSource } from '../audit.js'
 
+/** 两个版本之间的文本文件差异。二进制与非文本文件不在比对范围内。 */
+export interface TarballDiff {
+  readonly baseline: string
+  readonly added: readonly string[]
+  readonly removed: readonly string[]
+  readonly modified: readonly string[]
+}
+
+/**
+ * 逐文件比对两个 tarball 的文本内容。
+ *
+ * 只比文本：`filesFromTarball` 本来就只收集可读文本，二进制文件两边都不在集合里，
+ * 因此不会出现「图片被当成新增」的假信号。这条限制会写进报告。
+ */
+export function diffTextFiles(
+  current: readonly TextFile[],
+  previous: readonly TextFile[],
+): { added: string[]; removed: string[]; modified: string[] } {
+  const before = new Map(previous.map(file => [file.path, file.text]))
+  const after = new Map(current.map(file => [file.path, file.text]))
+
+  const added: string[] = []
+  const modified: string[] = []
+  for (const [path, text] of after) {
+    const old = before.get(path)
+    if (old === undefined) added.push(path)
+    else if (old !== text) modified.push(path)
+  }
+  const removed = [...before.keys()].filter(path => !after.has(path))
+
+  return { added: added.sort(), removed: removed.sort(), modified: modified.sort() }
+}
+
 /** 门禁规则的稳定 id。与 RV* 分开编号，避免「提示」和「拒绝」混成一件事。 */
 export type GateRuleId = 'GT001' | 'GT002' | 'GT003' | 'GT004' | 'GT005' | 'GT006'
 
@@ -72,6 +105,12 @@ export interface GateFinding {
 export interface GateOptions {
   readonly registry?: string
   /**
+   * 增量对照的基线版本（如 `1.9.0`）。提供时会额外下载旧 tarball 并逐文件比对，
+   * 报告里多出一节「本次变更」。**规则仍跑全量**——增量只改变呈现，不改变审查范围，
+   * 否则旧版本里本来就有的问题会被漏掉。
+   */
+  readonly baseline?: string
+  /**
    * 用户信任的包名白名单。命中高危但在名单里的包会被放行，并在报告里标注。
    *
    * 由调用方决定是否传：安装路径（`/install`、插件页包装）读清单后传入；
@@ -99,6 +138,8 @@ export interface GateResult {
   readonly notes: readonly string[]
   /** decision === 'error' 时的原因；只含错误类别，不含本机绝对路径。 */
   readonly problem?: string
+  /** 增量对照结果；只有传了 `baseline` 且成功取到旧包时才存在。 */
+  readonly diff?: TarballDiff
   /**
    * 命中了高危规则，但该包在信任清单里，按用户授权放行（`decision` 为 `pass`）。
    *
@@ -756,6 +797,24 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
     return empty('bad-manifest：package.json 不是合法 JSON，无法判定。')
   }
 
+  // 增量对照：只影响呈现，不缩小审查范围（规则仍跑全量）。
+  let diff: TarballDiff | undefined
+  const diffNotes: string[] = []
+  const baseline = options?.baseline
+  if (baseline !== undefined) {
+    if (baseline === resolved.version) {
+      diffNotes.push(`基线与目标版本相同（${baseline}），跳过增量对照。`)
+    } else {
+      try {
+        const previous = await resolveMetadata({ name: parsed.name, version: baseline }, options?.registry)
+        const previousBuffer = await downloadTarball(previous.tarball)
+        diff = { baseline, ...diffTextFiles(files, filesFromTarball(previousBuffer).files) }
+      } catch (error) {
+        diffNotes.push(`增量对照失败（${reasonOf(error)}），本次按全量审查。`)
+      }
+    }
+  }
+
   const patchText = textOf(files, 'cordis.patch.yml') ?? ''
   const findings = evaluateGateRules({ manifest, patchText, files })
 
@@ -764,7 +823,7 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
   const metaNotes = publishedBy === undefined
     ? ['未能获取完整元数据（体积超限或请求失败），GT004 发布者变更为本次跳过。']
     : []
-  const allNotes = metaNotes.length === 0 ? notes : [...notes, ...metaNotes]
+  const allNotes = [...notes, ...diffNotes, ...metaNotes]
   findings.push(...evaluateShadowRules({
     manifest,
     version: resolved.version,
@@ -789,6 +848,7 @@ export async function gateSpec(rawSpec: string, options?: GateOptions): Promise<
     decision: blockers.length > 0 && !trustedHit ? 'block' : 'pass',
     ...trustedHit ? { trustedOverride: true } : {},
     findings,
+    ...diff === undefined ? {} : { diff },
     review,
     notes: allNotes,
   }
@@ -809,6 +869,18 @@ export function gatePlainLines(result: GateResult): string[] {
     + (result.trustedOverride === true ? '（命中高危，但在信任清单里，已按授权放行）' : ''),
   )
   lines.push(`  RV 提示：${result.review.hints.length} 条（仅供参考，不参与判定）`)
+  if (result.diff !== undefined) {
+    const { added, modified, removed } = result.diff
+    if (added.length + modified.length + removed.length === 0) {
+      lines.push(`  本次变更（相对 ${result.diff.baseline}）：与基线相同（仅比对可读文本）`)
+    } else {
+      lines.push(`  本次变更（相对 ${result.diff.baseline}）：新增 ${added.length} / 修改 ${modified.length} / 删除 ${removed.length}`)
+      if (added.length > 0) lines.push(`    新增：${added.slice(0, 5).join('、')}${added.length > 5 ? ` 等 ${added.length} 个` : ''}`)
+      if (modified.length > 0) lines.push(`    修改：${modified.slice(0, 5).join('、')}${modified.length > 5 ? ` 等 ${modified.length} 个` : ''}`)
+      if (removed.length > 0) lines.push(`    删除：${removed.slice(0, 5).join('、')}${removed.length > 5 ? ` 等 ${removed.length} 个` : ''}`)
+      lines.push('    说明：只比对可读文本；命中的规则若落在本次新增文件上会标出。')
+    }
+  }
   const blockers = result.findings.filter(finding => finding.severity === 'error')
   const shadows = result.findings.filter(finding => finding.severity === 'warn')
   if (blockers.length === 0) {
@@ -816,7 +888,8 @@ export function gatePlainLines(result: GateResult): string[] {
   } else {
     lines.push('  高危规则（命中即拒绝）：')
     for (const finding of blockers) {
-      lines.push(`    ${finding.id} ${finding.title}${finding.where === undefined ? '' : `（${finding.where}）`}`)
+      const fresh = finding.where !== undefined && result.diff?.added.includes(finding.where) === true
+      lines.push(`    ${finding.id} ${finding.title}${finding.where === undefined ? '' : `（${finding.where}${fresh ? '，本次新增' : ''}）`}`)
       lines.push(`      ${finding.detail}`)
     }
   }
@@ -824,7 +897,8 @@ export function gatePlainLines(result: GateResult): string[] {
     // 影子项单独一段：它们写进报告和归档，但不改变上面的结论。
     lines.push('  影子规则（只观察，不阻断）：')
     for (const finding of shadows) {
-      lines.push(`    ${finding.id} ${finding.title}${finding.where === undefined ? '' : `（${finding.where}）`}`)
+      const fresh = finding.where !== undefined && result.diff?.added.includes(finding.where) === true
+      lines.push(`    ${finding.id} ${finding.title}${finding.where === undefined ? '' : `（${finding.where}${fresh ? '，本次新增' : ''}）`}`)
       lines.push(`      ${finding.detail}`)
     }
   }
@@ -851,6 +925,20 @@ export function gateMarkdownLines(result: GateResult): string[] {
   }
   const blockers = result.findings.filter(finding => finding.severity === 'error')
   const shadows = result.findings.filter(finding => finding.severity === 'warn')
+  if (result.diff !== undefined) {
+    const { added, modified, removed } = result.diff
+    lines.push('', `### 本次变更（相对 ${result.diff.baseline}）`)
+    if (added.length + modified.length + removed.length === 0) {
+      lines.push('', '与基线相同（仅比对可读文本文件）。')
+    } else {
+      lines.push('', `新增 ${added.length} / 修改 ${modified.length} / 删除 ${removed.length}`)
+      if (added.length > 0) lines.push(`- 新增：${added.map(path => `\`${path}\``).join('、')}`)
+      if (modified.length > 0) lines.push(`- 修改：${modified.map(path => `\`${path}\``).join('、')}`)
+      if (removed.length > 0) lines.push(`- 删除：${removed.map(path => `\`${path}\``).join('、')}`)
+      lines.push('', '> 只比对可读文本文件；规则仍跑全量，旧版本已有的问题不会被跳过。')
+    }
+  }
+
   lines.push('', '### 高危规则（命中即拒绝）')
   if (blockers.length === 0) lines.push('', '未命中。')
   for (const finding of blockers) {
@@ -882,6 +970,7 @@ export function gateJson(result: GateResult): Record<string, unknown> {
     decision: result.decision,
     ...result.trustedOverride === true ? { trustedOverride: true } : {},
     // 脚本可据此区分「有多少条真的会阻止安装」；findings 里每条自带 severity。
+    ...result.diff === undefined ? {} : { diff: { ...result.diff } },
     blockerCount: result.findings.filter(finding => finding.severity === 'error').length,
     shadowCount: result.findings.filter(finding => finding.severity === 'warn').length,
     disclaimer: 'static gate, not a malware verdict',

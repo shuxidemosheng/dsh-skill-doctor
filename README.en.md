@@ -41,7 +41,7 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 dsh plugin --profile <your-profile> add dsh-skill-doctor
 ```
 
-That installs the latest version; pin it by appending a version, e.g. `@1.2.0`.
+That installs the latest version; pin it by appending a version, e.g. `@1.3.0`.
 
 From 0.14.0 the plugin page shows **four component rows** (checkup / external skill sources / install gate / review archive), each with its own switch. The third row mounts all three external directories by default; switch it off there if you do not want that. See [External skill sources](#external-skill-sources-optional-second-row).
 
@@ -328,6 +328,14 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 ```text
 /install <pkg-or-exact-version>    slash command; inspects then installs inside dsh
 ```
+
+**Incremental review (`--baseline`)**: to see what actually changed in an upgrade, pass the previous version:/n/n```bash
+dsh-skill-lint --gate <pkg>@<new> --baseline <old>
+```
+
+The report gains a "changed files" section: added / modified / removed, and findings that land on a newly added file are marked.
+
+**Rules still run over the whole package** — the baseline only changes presentation, never the inspection scope, otherwise pre-existing problems would be skipped. Two known noise sources: only **readable text** is compared (binaries are out of scope), and content-hashed build outputs (`chunks/index-653r4dtn.js`) show up as "one removed, one added", which is just a rebuild renaming files.
 
 **CLI inspections are archived too** (`source: cli`), into the same file the two in-app paths write to. CI usually does not want pipeline records mixed into the local archive: pass `--no-audit` for a single run, or set `DSH_SKILL_DOCTOR_NO_AUDIT=1` once for the whole job.
 
@@ -661,7 +669,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 438 tests
+npm test          # 442 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```

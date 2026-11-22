@@ -41,7 +41,7 @@
 dsh plugin --profile <你的profile> add dsh-skill-doctor
 ```
 
-装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.2.0`。
+装的是最新版；想锁定版本就在名字后面加版本号，例如 `@1.3.0`。
 
 0.14.0 起插件页会显示**四个组件行**（体检 / 外部技能挂载 / 安装门禁 / 审查归档），可以分别开关；第二行默认把三家外部技能挂进 dsh，不想要就在插件页关掉，见[外部技能挂载](#外部技能挂载可选第二组件)。
 
@@ -417,6 +417,16 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 /install <包名或精确版本>    斜杠命令；审过后在 dsh 里真正安装
 ```
 
+**增量对照（`--baseline`）**：升级时想看「这次改了什么」，加一个旧版本号：
+
+```bash
+dsh-skill-lint --gate <包名>@<新版本> --baseline <旧版本>
+```
+
+报告会多一节「本次变更」：新增 / 修改 / 删除的文件清单；命中项如果落在新增文件上，会标出「本次新增」。
+
+**规则仍跑全量**——增量只改变呈现方式，不缩小审查范围，否则旧版本里本来就有的问题会被跳过。两个已知噪音：只比对**可读文本**（二进制不在范围内）；打包产物里带 hash 的文件名（`chunks/index-653r4dtn.js`）会显示成「删旧增新」，那是构建重命名的正常现象。
+
 **CLI 的审查也会进归档**（`source: cli`），与插件内两条路共用同一个文件。CI 里通常不想把流水线记录混进本机归档，加 `--no-audit` 关闭单次，或设一次 `DSH_SKILL_DOCTOR_NO_AUDIT=1` 关掉整轮。
 
 **判定规则**：GT001 安装期脚本把远程下载内容直接执行、GT002 patch 覆盖官方 scope 条目或用 `disabled: true` 静默关掉别人的插件、GT003 运行时依赖指向非 registry 的远端地址。这三条是 `error` 级，命中即拒；RV001–RV012 仍是 `info`/`warn` 提示，只展示、不参与拒绝——正常包几乎必然命中 `eval`、`postinstall` 之类，拿它们阻断会挡掉大量正常插件。
@@ -766,7 +776,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 438 个用例
+npm test          # 442 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

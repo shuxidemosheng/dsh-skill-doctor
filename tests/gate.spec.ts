@@ -7,6 +7,7 @@
 import { gzipSync } from 'node:zlib'
 import { describe, expect, it, vi } from 'vitest'
 import {
+  diffTextFiles,
   evaluateGateRules,
   evaluateShadowRules,
   filesFromTarball,
@@ -552,6 +553,99 @@ describe('shadow rules in the full gate path', () => {
       expect(result.findings.map(finding => finding.id)).not.toContain('GT004')
       // 跳过要留痕：否则用户会以为「发布者没变」，而实际是没查到。
       expect(result.notes.join('\n')).toContain('GT004')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+})
+
+describe('diffTextFiles', () => {
+  const file = (path: string, text: string) => ({ path, text, bytes: text.length })
+
+  it('classifies added, modified and removed', () => {
+    const diff = diffTextFiles(
+      [file('a.js', 'same'), file('b.js', 'new body'), file('c.js', 'added')],
+      [file('a.js', 'same'), file('b.js', 'old body'), file('d.js', 'gone')],
+    )
+    expect(diff.added).toEqual(['c.js'])
+    expect(diff.modified).toEqual(['b.js'])
+    expect(diff.removed).toEqual(['d.js'])
+  })
+
+  it('returns everything empty for identical trees', () => {
+    const diff = diffTextFiles([file('a.js', 'x')], [file('a.js', 'x')])
+    expect(diff).toEqual({ added: [], removed: [], modified: [] })
+  })
+})
+
+describe('incremental review (baseline)', () => {
+  const v2 = makeTarGz({
+    'package/package.json': JSON.stringify({ name: 'incr', version: '2.0.0' }),
+    'package/new.js': 'module.exports = 2\n',
+  })
+  const v1 = makeTarGz({
+    'package/package.json': JSON.stringify({ name: 'incr', version: '1.0.0' }),
+  })
+
+  function stubTwoVersions(): void {
+    vi.stubGlobal('fetch', async (input: unknown, init?: { headers?: Record<string, string> }) => {
+      const url = String(input)
+      if (url.endsWith('incr-2.0.0.tgz')) return new Response(v2, { status: 200 })
+      if (url.endsWith('incr-1.0.0.tgz')) return new Response(v1, { status: 200 })
+      const accept = init?.headers?.accept ?? ''
+      if (accept === 'application/json') {
+        return new Response(JSON.stringify({
+          time: { created: '2026-01-01T00:00:00Z', modified: '2026-02-01T00:00:00Z', '1.0.0': '2026-01-01T00:00:00Z', '2.0.0': '2026-02-01T00:00:00Z' },
+          versions: { '1.0.0': { _npmUser: { name: 'alice' } }, '2.0.0': { _npmUser: { name: 'alice' } } },
+        }), { status: 200 })
+      }
+      return new Response(JSON.stringify({
+        versions: {
+          '1.0.0': { dist: { tarball: 'https://registry.example/incr-1.0.0.tgz' } },
+          '2.0.0': { dist: { tarball: 'https://registry.example/incr-2.0.0.tgz' } },
+        },
+        'dist-tags': { latest: '2.0.0' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    })
+  }
+
+  it('reports added and modified files against the baseline', async () => {
+    stubTwoVersions()
+    try {
+      const result = await gateSpec('incr@2.0.0', {
+        registry: 'https://registry.example/',
+        baseline: '1.0.0',
+      })
+      expect(result.diff).toBeDefined()
+      expect(result.diff!.baseline).toBe('1.0.0')
+      expect(result.diff!.added).toContain('new.js')
+      expect(result.diff!.modified).toContain('package.json')
+
+      const text = gatePlainLines(result).join('\n')
+      expect(text).toContain('本次变更（相对 1.0.0）')
+      expect(gateJson(result).diff).toBeDefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('skips the second download when baseline equals the target version', async () => {
+    stubTwoVersions()
+    // 数一下 tarball 请求次数：基线相同时应当只下当前版本这一个包。
+    let tarballHits = 0
+    const inner = globalThis.fetch
+    vi.stubGlobal('fetch', async (input: unknown, init?: { headers?: Record<string, string> }) => {
+      if (String(input).endsWith('.tgz')) tarballHits++
+      return inner(input as never, init as never)
+    })
+    try {
+      const result = await gateSpec('incr@2.0.0', {
+        registry: 'https://registry.example/',
+        baseline: '2.0.0',
+      })
+      expect(result.diff).toBeUndefined()
+      expect(tarballHits).toBe(1)
+      expect(result.notes.join('\n')).toContain('基线与目标版本相同')
     } finally {
       vi.unstubAllGlobals()
     }

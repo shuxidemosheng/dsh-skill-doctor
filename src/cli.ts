@@ -28,7 +28,7 @@ import { renderFixJson, renderFixMarkdown, type UnfixableHit } from './fixer/rep
 import { readDshVersion } from './version-check.js'
 import type { ScanResult, Severity } from './types.js'
 
-const VERSION = '1.2.0'
+const VERSION = '1.3.0'
 
 interface CliOptions {
   readonly paths: string[]
@@ -47,6 +47,8 @@ interface CliOptions {
   readonly gate?: string
   /** `--no-audit`：本次审查不写归档（CI 里建议加，避免污染本机归档）。 */
   readonly noAudit: boolean
+  /** `--baseline <version>`：与指定旧版本逐文件比对，报告里多一节「本次变更」。 */
+  readonly baseline?: string
   readonly profile?: string
   readonly fix: boolean
   readonly apply: boolean
@@ -83,6 +85,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let review: string | undefined
   let gate: string | undefined
   let noAudit = false
+  let baseline: string | undefined
   let profile: string | undefined
   let fix = false
   let apply = false
@@ -111,6 +114,12 @@ function parseArgs(argv: readonly string[]): CliOptions {
         break
       }
       case '--no-audit': noAudit = true; break
+      case '--baseline': {
+        const value = argv[++i]
+        if (value === undefined || value.trim().length === 0) fail('--baseline requires a version')
+        baseline = value.trim()
+        break
+      }
       case '--profile': profile = argv[++i]; break
       case '--fix': fix = true; break
       case '--apply': apply = true; break
@@ -200,6 +209,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     ...review === undefined ? {} : { review },
     ...gate === undefined ? {} : { gate },
     noAudit,
+    ...baseline === undefined ? {} : { baseline },
     ...profile === undefined ? {} : { profile },
     fix,
     apply,
@@ -224,6 +234,7 @@ function usage(): string {
     '  --review <dir>         static heuristics for one unpacked plugin directory (no .tgz)',
     '  --gate <spec>          inspect a registry tarball before install (exit 1 = blocked)',
     '  --no-audit             do not append this --gate run to the local archive',
+    '  --baseline <version>   compare against an older version (adds a changed-files section)',
     '  --profile <name>       profile to inspect with --plugins (default desktop)',
     '  --json                 machine-readable output',
     '  --warn-as-error        exit 1 when any warning is present',
@@ -348,7 +359,11 @@ async function main(): Promise<void> {
   // 安装门禁：与 --review 一样不依赖技能扫描，先单独分流。
   // 只有它使用「1 = 被拒绝」这个退出码；--review 的提示恒为 0，两者语义不混用。
   if (options.gate !== undefined) {
-    const result = await gateSpec(options.gate)
+    // 增量对照需要先知道目标版本才能取旧包，交给 gateSpec 内部处理。
+    const result = await gateSpec(
+      options.gate,
+      options.baseline === undefined ? undefined : { baseline: options.baseline },
+    )
 
     // CLI 没有 cordis 容器，拿不到 `skillDoctorAudit` 服务，所以直接调归档模块。
     // 开关两层：`--no-audit` 管单次，环境变量管整个 CI 环境（省得每条命令都加）。
