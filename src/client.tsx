@@ -763,18 +763,23 @@ function ActivityOverlay(): JSX.Element | null {
         )}
       </div>
 
-      <div
-        style={{
-          padding: '6px 14px 10px',
-          fontSize: 10,
-          opacity: 0.55,
-          borderTop: `1px solid ${TOKEN.border}`,
-          lineHeight: 1.6,
-        }}
-      >
-        只显示最近 {MAX_VISIBLE} 条{hidden > 0 ? `，另有 ${hidden} 条更早的没展开` : ''}。
-        更早于会话窗口的调用读不到；工具属于哪个插件 dsh 没有暴露，所以这里只能显示工具名。
-      </div>
+      {/* 这段说明只对「活动」成立（20 条上限、工具名不带归属）。
+          「使用统计」的规则不同（200 个技能上限、列的是技能名），它自己页内已有说明；
+          空列表时也不显示——上面那句空态提示已经够清楚。 */}
+      {panelTab === 'activity' && visible.length > 0 ? (
+        <div
+          style={{
+            padding: '6px 14px 10px',
+            fontSize: 10,
+            opacity: 0.55,
+            borderTop: `1px solid ${TOKEN.border}`,
+            lineHeight: 1.6,
+          }}
+        >
+          只显示最近 {MAX_VISIBLE} 条{hidden > 0 ? `，另有 ${hidden} 条更早的没展开` : ''}。
+          更早于会话窗口的调用读不到；工具属于哪个插件 dsh 没有暴露，所以这里只能显示工具名。
+        </div>
+      ) : null}
     </div>
   )
 }
