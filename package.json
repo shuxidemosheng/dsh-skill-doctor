@@ -57,7 +57,8 @@
     "README.en.md",
     "compat/locale",
     "gate/locale",
-    "audit/locale"
+    "audit/locale",
+    "docs/images"
   ],
   "engines": {
     "node": ">=24",

@@ -19,6 +19,14 @@ Broken skills fail **silently**: not loaded, shadowed by a same-named copy, desc
 
 `dsh-skill-doctor` turns those invisible problems into a readable report. It is not a marketplace and not a security scanner; it answers one question: **does this thing actually work inside dsh?**
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shuxidemosheng/dsh-skill-doctor/main/docs/images/checkup-report.png" alt="Skill checkup report: 13 skills with descriptions long enough to be truncated">
+</p>
+
+A real checkup: 13 of 36 skills have descriptions long enough that **the model only ever sees the first half**. The report quotes the truncated text verbatim — for `nature-citation`, the trigger phrases ("分段引用、自动给出引用、Nature 系列引用") never reached the model's context at all.
+
+**449 tests · 4 tools · 4 component rows · zero runtime dependencies**
+
 ## Highlights
 
 - **Shows what the model actually sees.** Not "description too long", but the truncated text **verbatim** — you can tell at a glance whether your trigger words made the cut.
@@ -72,6 +80,10 @@ Disk level: entry collisions, duplicate bundles, installed-but-disabled. Runtime
 Look at the bar above the composer, or open it for the full call stream.
 
 ## Panel
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shuxidemosheng/dsh-skill-doctor/main/docs/images/panel-modes.png" alt="The panel's modes tab: eight buttons mapping to eight slash commands" width="560">
+</p>
 
 A compact bar sits above the conversation input:
 
@@ -447,6 +459,11 @@ The install gate is **not part of this config**: it is its own component row (`s
 ## External skill sources (optional second row)
 
 From 0.14.0 the package exposes component rows in the plugin page, each with its own switch (the first two also carry their own `config`). There are **four** today:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shuxidemosheng/dsh-skill-doctor/main/docs/images/component-rows.png" alt="The four component rows in the plugin page">
+</p>
+
 
 | Row | Module | What it does |
 |---|---|---|

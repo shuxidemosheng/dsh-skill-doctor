@@ -19,6 +19,14 @@
 
 `dsh-skill-doctor` 把这些隐性问题变成可读的报告。它不做技能市场，也不做**恶意代码判定**；安全侧只有静态启发式风险提示，不替代安全审查。它只回答一个问题：**这个东西在 dsh 里到底能不能正常工作？**
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shuxidemosheng/dsh-skill-doctor/main/docs/images/checkup-report.png" alt="技能体检报告：13 个技能简介超长，模型看不到后半段触发词">
+</p>
+
+一次真实体检：36 个技能里有 13 个简介超长，**模型只看得到前半段**。报告把被切掉的那段原文原样贴出来——`nature-citation` 的「分段引用、自动给出引用、Nature 系列引用」，这些触发词从来没有进入过模型的上下文。
+
+**449 个测试 · 4 个工具 · 4 行组件 · 运行时零依赖**
+
 ## 亮点
 
 - **告诉你模型到底看到了什么。** 不是一句“简介超长”，而是把截断后那段原文**原样贴出来**——你一眼就能看出自己的触发词在不在里面。
@@ -72,6 +80,10 @@ dsh plugin --profile <你的profile> add dsh-skill-doctor
 看输入框上方那条面板，或者点开看完整调用流。
 
 ## 面板
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shuxidemosheng/dsh-skill-doctor/main/docs/images/panel-modes.png" alt="面板的功能页：八个按钮对应八条斜杠命令" width="560">
+</p>
 
 会话输入框上方常驻一条，点开是本次会话的调用流：
 
@@ -552,6 +564,11 @@ GitHub Actions：
 ## 外部技能挂载（可选第二组件）
 
 0.14.0 起这个包在插件页显示组件行，每行有自己的开关（前两行还有各自的 `config`）。当前是**四行**：
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/shuxidemosheng/dsh-skill-doctor/main/docs/images/component-rows.png" alt="插件页的四行组件：skill-doctor / skill-doctor-compat / skill-doctor-gate / skill-doctor-audit">
+</p>
+
 
 | 组件行 | 模块 | 做什么 |
 |---|---|---|
