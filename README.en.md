@@ -27,6 +27,20 @@ A real checkup: 13 of 36 skills have descriptions long enough that **the model o
 
 **449 tests · 4 tools · 4 component rows · zero runtime dependencies**
 
+## When to use it
+
+Run a checkup before touching code if any of these sounds familiar:
+
+| What you see | What it usually is |
+|---|---|
+| The model never uses the skill you wrote | Description went past the limit; trigger words fell beyond the cut |
+| Skill is installed but missing from the `/` menu | Incomplete frontmatter, or the file sits outside the scanned root |
+| Two plugins claim the same skill name | Only one wins; the other fails silently |
+| Plugin shows "installed" but nothing happens | A component row failed to load, or its patch did not apply |
+| You edited a description and cannot tell if it helped | Compare against the saved baseline instead of guessing |
+
+The checkup is read-only: it inspects skill files and plugin runtime state, then reports the problem, the cause, and the fix.
+
 ## Highlights
 
 - **Shows what the model actually sees.** Not "description too long", but the truncated text **verbatim** — you can tell at a glance whether your trigger words made the cut.

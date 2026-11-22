@@ -11,7 +11,12 @@
     "lint",
     "doctor",
     "diagnostics",
-    "agent"
+    "agent",
+    "troubleshooting",
+    "conflict",
+    "debug",
+    "truncation",
+    "agent-skills"
   ],
   "homepage": "https://github.com/shuxidemosheng/dsh-skill-doctor#readme",
   "bugs": {
