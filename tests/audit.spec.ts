@@ -19,6 +19,7 @@ import {
   pruneFile,
   queryEntries,
   serializeEntry,
+  shouldSkipAudit,
   toEntry,
   type AuditEntry,
   type RawVerdict,
@@ -216,5 +217,24 @@ describe('append / query / stats', () => {
 
   it('points at $DSH_HOME/skill-doctor/audit.jsonl', () => {
     expect(auditPath().replace(/\\/g, '/')).toMatch(/skill-doctor\/audit\.jsonl$/)
+  })
+})
+
+describe('shouldSkipAudit', () => {
+  it('writes by default', () => {
+    expect(shouldSkipAudit(false, {})).toBe(false)
+  })
+
+  it('honours --no-audit', () => {
+    expect(shouldSkipAudit(true, {})).toBe(true)
+  })
+
+  it('honours the environment variable so CI can opt out once', () => {
+    // 只认字面量 '1'：其它值（'0'、'true'、空串）都不该被当成关闭，
+    // 否则 CI 里随便设个变量就静默停掉归档，排查时很难发现。
+    expect(shouldSkipAudit(false, { DSH_SKILL_DOCTOR_NO_AUDIT: '1' })).toBe(true)
+    expect(shouldSkipAudit(false, { DSH_SKILL_DOCTOR_NO_AUDIT: '0' })).toBe(false)
+    expect(shouldSkipAudit(false, { DSH_SKILL_DOCTOR_NO_AUDIT: 'true' })).toBe(false)
+    expect(shouldSkipAudit(false, { DSH_SKILL_DOCTOR_NO_AUDIT: '' })).toBe(false)
   })
 })

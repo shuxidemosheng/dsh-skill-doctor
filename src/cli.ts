@@ -20,6 +20,7 @@ import { renderPluginJson, renderPluginMarkdown } from './plugins/report.js'
 import { scanProfile } from './plugins/scan.js'
 import { reviewBundle, reviewJson, reviewMarkdownLines } from './plugins/review.js'
 import { gateJson, gateMarkdownLines, gateSpec } from './plugins/gate.js'
+import { appendEntry, shouldSkipAudit, toEntry } from './audit.js'
 import { applyFixes, type FixOutcome, type Verify } from './fixer/apply.js'
 import { setDescription } from './fixer/description.js'
 import { FIXABLE_RULES, planFixes, type FixableRule } from './fixer/plan.js'
@@ -44,6 +45,8 @@ interface CliOptions {
   readonly review?: string
   /** `--gate <spec>`：审 registry tarball，命中高危就不装。 */
   readonly gate?: string
+  /** `--no-audit`：本次审查不写归档（CI 里建议加，避免污染本机归档）。 */
+  readonly noAudit: boolean
   readonly profile?: string
   readonly fix: boolean
   readonly apply: boolean
@@ -79,6 +82,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
   let plugins = false
   let review: string | undefined
   let gate: string | undefined
+  let noAudit = false
   let profile: string | undefined
   let fix = false
   let apply = false
@@ -106,6 +110,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
         gate = value.trim()
         break
       }
+      case '--no-audit': noAudit = true; break
       case '--profile': profile = argv[++i]; break
       case '--fix': fix = true; break
       case '--apply': apply = true; break
@@ -194,6 +199,7 @@ function parseArgs(argv: readonly string[]): CliOptions {
     plugins,
     ...review === undefined ? {} : { review },
     ...gate === undefined ? {} : { gate },
+    noAudit,
     ...profile === undefined ? {} : { profile },
     fix,
     apply,
@@ -217,6 +223,7 @@ function usage(): string {
     '  --plugins              check installed plugins for structural conflicts (no skill scanning)',
     '  --review <dir>         static heuristics for one unpacked plugin directory (no .tgz)',
     '  --gate <spec>          inspect a registry tarball before install (exit 1 = blocked)',
+    '  --no-audit             do not append this --gate run to the local archive',
     '  --profile <name>       profile to inspect with --plugins (default desktop)',
     '  --json                 machine-readable output',
     '  --warn-as-error        exit 1 when any warning is present',
@@ -342,6 +349,19 @@ async function main(): Promise<void> {
   // 只有它使用「1 = 被拒绝」这个退出码；--review 的提示恒为 0，两者语义不混用。
   if (options.gate !== undefined) {
     const result = await gateSpec(options.gate)
+
+    // CLI 没有 cordis 容器，拿不到 `skillDoctorAudit` 服务，所以直接调归档模块。
+    // 开关两层：`--no-audit` 管单次，环境变量管整个 CI 环境（省得每条命令都加）。
+    if (!shouldSkipAudit(options.noAudit)) {
+      try {
+        await appendEntry(toEntry(result, 'cli'))
+      } catch (error) {
+        // 归档是旁路：写不进去只往 stderr 报一行，绝不改变退出码。
+        process.stderr.write(
+          `skill-doctor: could not write audit record: ${error instanceof Error ? error.message : String(error)}\n`,
+        )
+      }
+    }
     process.stdout.write(
       `${options.json ? JSON.stringify(gateJson(result), null, 2) : gateMarkdownLines(result).join('\n')}\n`,
     )

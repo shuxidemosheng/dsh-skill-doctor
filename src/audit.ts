@@ -100,6 +100,21 @@ export interface PruneResult {
   readonly freedBytes: number
 }
 
+/**
+ * `--gate` 这次审查要不要写归档。
+ *
+ * 放在这里而不是 cli.ts：`cli.ts` 顶层有 `await main()`，测试无法 import。
+ * 这条规则含一个环境变量约定，需要被单测钉住。
+ * @param noAudit - 命令行是否带 `--no-audit`。
+ * @param env - 环境变量表；默认取 process.env。
+ */
+export function shouldSkipAudit(
+  noAudit: boolean,
+  env: { readonly DSH_SKILL_DOCTOR_NO_AUDIT?: string } = process.env,
+): boolean {
+  return noAudit || env.DSH_SKILL_DOCTOR_NO_AUDIT === '1'
+}
+
 /** 默认归档路径：`$DSH_HOME/skill-doctor/audit.jsonl`，与信任清单同目录。 */
 export function auditPath(): string {
   return resolve(dshHome(), 'skill-doctor', 'audit.jsonl')

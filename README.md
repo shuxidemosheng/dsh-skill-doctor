@@ -417,6 +417,8 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <包名或精确版本> --j
 /install <包名或精确版本>    斜杠命令；审过后在 dsh 里真正安装
 ```
 
+**CLI 的审查也会进归档**（`source: cli`），与插件内两条路共用同一个文件。CI 里通常不想把流水线记录混进本机归档，加 `--no-audit` 关闭单次，或设一次 `DSH_SKILL_DOCTOR_NO_AUDIT=1` 关掉整轮。
+
 **判定规则**：GT001 安装期脚本把远程下载内容直接执行、GT002 patch 覆盖官方 scope 条目或用 `disabled: true` 静默关掉别人的插件、GT003 运行时依赖指向非 registry 的远端地址。这三条是 `error` 级，命中即拒；RV001–RV012 仍是 `info`/`warn` 提示，只展示、不参与拒绝——正常包几乎必然命中 `eval`、`postinstall` 之类，拿它们阻断会挡掉大量正常插件。
 
 **退出码**：`--gate` 通过 `0`、命中高危 `1`、没审成 `2`。取不到包、解析失败、网络错误一律 `decision: 'error'`，**fail closed，绝不当成通过**。
@@ -754,7 +756,7 @@ dsh plugin --profile <你的profile> list
 ```bash
 npm install
 npm run build     # tsc + esbuild（host / cli / client / compat 四份产物）
-npm test          # 425 个用例
+npm test          # 428 个用例
 npm run smoke     # 真 loader 冒烟
 npm run e2e:all   # 真实 dsh headless，全组
 ```

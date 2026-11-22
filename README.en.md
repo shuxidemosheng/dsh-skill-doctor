@@ -329,6 +329,8 @@ npx --package dsh-skill-doctor dsh-skill-lint --gate <pkg-or-exact-version> --js
 /install <pkg-or-exact-version>    slash command; inspects then installs inside dsh
 ```
 
+**CLI inspections are archived too** (`source: cli`), into the same file the two in-app paths write to. CI usually does not want pipeline records mixed into the local archive: pass `--no-audit` for a single run, or set `DSH_SKILL_DOCTOR_NO_AUDIT=1` once for the whole job.
+
 **Rules**: GT001 install scripts that pipe downloaded content into a shell, GT002 patches that overwrite official-scope entries or silently disable another plugin with `disabled: true`, GT003 runtime dependencies pointing at non-registry remote sources. These are `error`-level and refuse the install. RV001-RV012 remain `info`/`warn` hints shown for context only — normal bundles almost always contain `eval` or `postinstall`, so using them to block would reject legitimate packages.
 
 **Exit codes**: `--gate` returns `0` on pass, `1` on a high-risk hit, `2` when the inspection could not finish. Any fetch, parse or network failure yields `decision: 'error'` — **fail closed, never treated as a pass**.
@@ -649,7 +651,7 @@ From 0.14.0 the second row also mounts external skill directories, but only as r
 ```bash
 npm install
 npm run build     # tsc + esbuild (host / cli / client / compat)
-npm test          # 425 tests
+npm test          # 428 tests
 npm run smoke
 npm run e2e:all   # real dsh headless, all groups
 ```
